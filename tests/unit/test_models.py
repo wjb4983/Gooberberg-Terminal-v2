@@ -6,6 +6,8 @@ import torch
 
 from quant_platform.models import (
     MLPConfig,
+    ModelDefinition,
+    ModelRegistry,
     ModelType,
     RecurrentConfig,
     TemporalCNNConfig,
@@ -77,3 +79,43 @@ def test_instantiates_transformer_encoder_placeholder() -> None:
     output = model(torch.randn(3, 6, 4))
 
     assert output.shape == (3, 2)
+
+
+def test_model_definition_builds_runtime_config() -> None:
+    definition = ModelDefinition(
+        name="baseline_transformer",
+        model_type=ModelType.TRANSFORMER,
+        layer_count=2,
+        hidden_size=64,
+        dropout=0.1,
+        sequence_length=32,
+        input_size=8,
+        output_size=1,
+    )
+
+    config = definition.to_model_config_dict()
+
+    assert config["model_type"] == "transformer"
+    assert config["d_model"] == 64
+    assert config["num_layers"] == 2
+
+
+def test_model_registry_registers_definition(tmp_path) -> None:
+    registry = ModelRegistry(tmp_path / "metadata.sqlite")
+    definition = ModelDefinition(
+        name="baseline_mlp",
+        model_type=ModelType.MLP,
+        layer_count=2,
+        hidden_size=32,
+        sequence_length=16,
+        input_size=4,
+        output_size=1,
+    )
+
+    model_id = registry.register(definition)
+    saved = registry.get("baseline_mlp")
+
+    assert model_id > 0
+    assert saved is not None
+    assert saved.name == "baseline_mlp"
+    assert saved.hidden_size == 32
