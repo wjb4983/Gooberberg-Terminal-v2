@@ -5,5 +5,11 @@ from quant_platform.data.providers.base import (
     MarketDataProvider,
 )
 from quant_platform.data.providers.fake import FakeMarketDataProvider
+from quant_platform.data.providers.massive import MassiveMarketDataProvider
 
-__all__ = ["BaseMarketDataProvider", "FakeMarketDataProvider", "MarketDataProvider"]
+__all__ = [
+    "BaseMarketDataProvider",
+    "FakeMarketDataProvider",
+    "MarketDataProvider",
+    "MassiveMarketDataProvider",
+]
