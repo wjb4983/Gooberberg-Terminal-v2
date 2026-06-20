@@ -11,6 +11,8 @@ def test_api_v1_routes_are_registered() -> None:
     paths = app.openapi()["paths"]
     expected_paths = {
         "/api/v1/health",
+        "/api/v1/backtests",
+        "/api/v1/backtests/{backtest_id}",
         "/api/v1/datasets",
         "/api/v1/datasets/{dataset_id}",
         "/api/v1/datasets/{dataset_id}/coverage",
@@ -34,6 +36,8 @@ def test_api_v1_routes_have_expected_methods() -> None:
 
     paths = app.openapi()["paths"]
     assert "get" in paths["/api/v1/health"]
+    assert {"get", "post"} <= set(paths["/api/v1/backtests"])
+    assert "get" in paths["/api/v1/backtests/{backtest_id}"]
     assert {"get", "post"} <= set(paths["/api/v1/datasets"])
     assert "get" in paths["/api/v1/datasets/{dataset_id}"]
     assert "post" in paths["/api/v1/datasets/{dataset_id}/coverage"]
