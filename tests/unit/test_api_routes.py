@@ -16,6 +16,8 @@ def test_api_v1_routes_are_registered() -> None:
         "/api/v1/datasets/{dataset_id}/coverage",
         "/api/v1/datasets/{dataset_id}/ingest",
         "/api/v1/ingestion/plan",
+        "/api/v1/models",
+        "/api/v1/models/{model_id}",
         "/api/v1/ingestion/manifests",
         "/api/v1/jobs",
         "/api/v1/jobs/{job_id}",
@@ -33,6 +35,8 @@ def test_api_v1_routes_have_expected_methods() -> None:
     assert "post" in paths["/api/v1/datasets/{dataset_id}/coverage"]
     assert "post" in paths["/api/v1/datasets/{dataset_id}/ingest"]
     assert "post" in paths["/api/v1/ingestion/plan"]
+    assert {"get", "post"} <= set(paths["/api/v1/models"])
+    assert "get" in paths["/api/v1/models/{model_id}"]
     assert "get" in paths["/api/v1/ingestion/manifests"]
     assert "get" in paths["/api/v1/jobs"]
     assert "get" in paths["/api/v1/jobs/{job_id}"]
