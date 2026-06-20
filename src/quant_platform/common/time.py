@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from datetime import UTC as DATETIME_UTC
 from datetime import date, datetime, timezone
 
-UTC = timezone.utc
+UTC = DATETIME_UTC
 
 
 def utc_now() -> datetime:

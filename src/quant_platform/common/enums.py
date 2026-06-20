@@ -2,17 +2,7 @@
 
 from __future__ import annotations
 
-import enum
-
-
-StrEnum = getattr(enum, "StrEnum", None)
-if StrEnum is None:
-
-    class StrEnum(str, enum.Enum):  # type: ignore[no-redef]
-        """Compatibility fallback for Python versions before 3.11."""
-
-        def __str__(self) -> str:
-            return self.value
+from enum import StrEnum
 
 
 class AssetClass(StrEnum):

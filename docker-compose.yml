@@ -1,0 +1,29 @@
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  api:
+    build: .
+    command: uv run uvicorn apps.api.main:app --host 0.0.0.0 --port 8000 --reload
+    env_file:
+      - .env.example
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+    depends_on:
+      - redis
+
+  ui:
+    build: .
+    command: uv run streamlit run apps/ui/Home.py --server.address 0.0.0.0 --server.port 8501
+    env_file:
+      - .env.example
+    ports:
+      - "8501:8501"
+    volumes:
+      - .:/app
+    depends_on:
+      - api

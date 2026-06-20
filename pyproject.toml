@@ -1,0 +1,54 @@
+[project]
+name = "gooberberg-terminal-v2"
+version = "0.1.0"
+description = "Quant research and trading platform scaffold."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "duckdb>=1.0.0",
+    "fastapi>=0.115.0",
+    "pandas>=2.2.0",
+    "polars>=1.0.0",
+    "pyarrow>=16.0.0",
+    "pydantic>=2.8.0",
+    "pydantic-settings>=2.4.0",
+    "redis>=5.0.0",
+    "rq>=1.16.0",
+    "sqlalchemy>=2.0.0",
+    "streamlit>=1.36.0",
+    "torch>=2.3.0",
+    "uvicorn[standard]>=0.30.0",
+]
+
+[dependency-groups]
+dev = [
+    "mypy>=1.10.0",
+    "pytest>=8.2.0",
+    "pytest-timeout>=2.3.1",
+    "ruff>=0.5.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv]
+package = true
+
+[tool.pytest.ini_options]
+addopts = "--timeout=30"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.mypy]
+python_version = "3.11"
+packages = ["quant_platform"]
+strict = true
+warn_unused_ignores = true
+warn_return_any = true

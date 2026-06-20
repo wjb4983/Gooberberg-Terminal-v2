@@ -50,7 +50,9 @@ else:
                     value = data.get(field_name, getenv(env_name, default))
                 if field_name in {"data_lake_root", "catalog_db_path"}:
                     value = expand_path(value)
-                elif field_name == "default_provider" and not isinstance(value, Provider):
+                elif field_name == "default_provider" and not isinstance(
+                    value, Provider
+                ):
                     value = Provider(value)
                 setattr(self, field_name, value)
 
