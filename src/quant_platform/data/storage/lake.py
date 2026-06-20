@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
+
 from quant_platform.common.enums import AssetClass, DataType, Provider
 from quant_platform.common.paths import expand_path
 from quant_platform.common.time import parse_date
@@ -59,7 +60,7 @@ def partition(name: str, value: str | AssetClass | DataType | Provider) -> str:
 
 
 def symbol_partition(name: str, value: str) -> str:
-    """Build a Hive-style partition segment whose value is an uppercase market symbol."""
+    """Build a Hive-style partition segment for an uppercase market symbol."""
 
     return f"{_clean(name)}={_symbol(value)}"
 
