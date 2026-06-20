@@ -69,3 +69,14 @@ def test_fake_snapshot_is_single_row_latest_view() -> None:
     assert snapshot.shape == (1, 6)
     assert snapshot.item(0, "symbol") == "NVDA"
     assert snapshot.item(0, "bid_price") < snapshot.item(0, "ask_price")
+
+
+def test_fake_provider_rejects_empty_symbols() -> None:
+    provider = FakeMarketDataProvider()
+
+    try:
+        provider.equity_trades("   ", start="2026-06-20")
+    except ValueError as exc:
+        assert str(exc) == "symbol cannot be empty"
+    else:  # pragma: no cover - protects against false positives
+        raise AssertionError("empty symbol should be rejected")

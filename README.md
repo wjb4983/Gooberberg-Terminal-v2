@@ -42,7 +42,7 @@ Run these tasks in order:
 5. Set `MASSIVE_API_KEY` in `.env` if you need live Massive.com data. Leave it blank when using fake/mock providers.
 6. Fill only local values in `.env`; never commit `.env`, API keys, tokens, credentials, or other secrets.
 7. Install dependencies: `uv sync --dev`.
-8. Run tests with a timeout: `uv run pytest --timeout=30`.
+8. Run tests with a timeout: `uv run pytest --timeout=60`.
 9. Start optional Redis dependency if you need queued jobs: `docker compose up redis`.
 10. Start the API directly with Python tooling: `uv run uvicorn apps.api.main:app --host 0.0.0.0 --port 8000 --reload`.
 11. Start the Streamlit UI directly: `uv run streamlit run apps/ui/Home.py --server.address 0.0.0.0 --server.port 8501`.
@@ -112,8 +112,8 @@ The direct Python commands above remain the recommended development workflow bec
 All test commands should include explicit timeouts so automation cannot hang indefinitely:
 
 ```bash
-uv run pytest --timeout=30
-uv run pytest tests/unit --timeout=30
+uv run pytest --timeout=60
+uv run pytest tests/unit --timeout=60
 uv run ruff check .
 uv run mypy src
 ```

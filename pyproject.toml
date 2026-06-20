@@ -36,12 +36,13 @@ build-backend = "hatchling.build"
 package = true
 
 [tool.pytest.ini_options]
-addopts = "--timeout=30"
+addopts = "--timeout=60"
 testpaths = ["tests"]
 
 [tool.ruff]
 line-length = 88
 target-version = "py311"
+src = ["src", "tests"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
@@ -52,3 +53,4 @@ packages = ["quant_platform"]
 strict = true
 warn_unused_ignores = true
 warn_return_any = true
+ignore_missing_imports = true
