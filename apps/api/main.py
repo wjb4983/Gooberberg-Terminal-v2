@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from fastapi import FastAPI
 
-from apps.api.routes import datasets, experiments, ingestion, jobs, models
+from apps.api.routes import backtests, datasets, experiments, ingestion, jobs, models
 from quant_platform.config import get_settings
 
 app = FastAPI(title="Gooberberg Terminal API", version="0.1.0")
+app.include_router(backtests.router)
 app.include_router(datasets.router)
 app.include_router(experiments.router)
 app.include_router(ingestion.router)
