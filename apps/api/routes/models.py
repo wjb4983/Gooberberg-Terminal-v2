@@ -10,7 +10,11 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 
 from quant_platform.config import get_settings
-from quant_platform.data.storage.catalog import MetadataCatalog, model_definitions
+from quant_platform.data.storage.catalog import (
+    MetadataCatalog,
+    feature_sets,
+    model_definitions,
+)
 from quant_platform.models.registry import ModelRegistry
 from quant_platform.models.schemas import ModelDefinition, ModelType
 
@@ -42,6 +46,24 @@ class ModelListResponse(BaseModel):
     models: list[ModelResponse]
 
 
+class FeatureSetResponse(BaseModel):
+    """Feature set returned by the API for experiment configuration."""
+
+    id: int
+    name: str
+    version: str
+    features: list[str] = Field(default_factory=list)
+    dataset_id: int | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime | None = None
+
+
+class FeatureSetListResponse(BaseModel):
+    """Collection response for registered feature sets."""
+
+    feature_sets: list[FeatureSetResponse]
+
+
 def _catalog() -> MetadataCatalog:
     settings = get_settings()
     return MetadataCatalog(settings.catalog_db_path)
@@ -58,6 +80,38 @@ def _model_response(row: Any) -> ModelResponse:
         metadata=mapping.get("metadata") or {},
         created_at=mapping.get("created_at"),
     )
+
+
+def _feature_set_response(row: Any) -> FeatureSetResponse:
+    mapping = dict(row)
+    return FeatureSetResponse(
+        id=mapping["id"],
+        name=mapping["name"],
+        version=mapping["version"],
+        features=list(mapping.get("features") or []),
+        dataset_id=mapping.get("dataset_id"),
+        metadata=mapping.get("metadata") or {},
+        created_at=mapping.get("created_at"),
+    )
+
+
+def _get_feature_set_row(
+    catalog: MetadataCatalog, feature_set_id: int
+) -> dict[str, Any]:
+    with catalog.engine.connect() as connection:
+        row = (
+            connection.execute(
+                select(feature_sets).where(feature_sets.c.id == feature_set_id)
+            )
+            .mappings()
+            .first()
+        )
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"feature set not found: {feature_set_id}",
+        )
+    return dict(row)
 
 
 def _get_model_row(catalog: MetadataCatalog, model_id: int) -> dict[str, Any]:
@@ -95,6 +149,27 @@ def create_model(request: ModelCreateRequest) -> ModelResponse:
     model_id = registry.register(request.definition, overwrite=request.overwrite)
     row = _get_model_row(registry.catalog, model_id)
     return _model_response(row)
+
+
+@router.get("/feature-sets", response_model=FeatureSetListResponse)
+def list_feature_sets() -> FeatureSetListResponse:
+    """List registered feature sets for experiment configuration."""
+
+    catalog = _catalog()
+    catalog.create_all()
+    rows = catalog.list_rows("feature_sets")
+    return FeatureSetListResponse(
+        feature_sets=[_feature_set_response(row) for row in rows]
+    )
+
+
+@router.get("/feature-sets/{feature_set_id}", response_model=FeatureSetResponse)
+def get_feature_set(feature_set_id: int) -> FeatureSetResponse:
+    """Return a registered feature set by id."""
+
+    catalog = _catalog()
+    catalog.create_all()
+    return _feature_set_response(_get_feature_set_row(catalog, feature_set_id))
 
 
 @router.get("/{model_id}", response_model=ModelResponse)
