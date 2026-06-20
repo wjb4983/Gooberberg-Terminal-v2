@@ -76,7 +76,7 @@ class Settings(BaseSettings):
         description="Root directory for data lake files.",
     )
     catalog_db_path: Path = Field(
-        default=Path("./data/catalog/catalog.db"),
+        default=Path("./data/catalog/metadata.sqlite"),
         description="SQLite catalog database path.",
     )
     redis_url: str = Field(
