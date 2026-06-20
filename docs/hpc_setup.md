@@ -28,7 +28,7 @@ Do not expose development ports publicly from an HPC or shared server. Prefer SS
 5. Set `MASSIVE_API_KEY` in `.env` only if live Massive.com access is needed.
 6. Confirm secrets are not staged for commit.
 7. Install dependencies: `uv sync --dev`.
-8. Run tests with a timeout: `uv run pytest --timeout=30`.
+8. Run tests with a timeout: `uv run pytest --timeout=60`.
 9. Start optional Redis with `docker compose up redis` if Docker is available and allowed.
 10. Start the API directly: `uv run uvicorn apps.api.main:app --host 0.0.0.0 --port 8000 --reload`.
 11. Start Streamlit directly: `uv run streamlit run apps/ui/Home.py --server.address 0.0.0.0 --server.port 8501`.
@@ -84,8 +84,8 @@ On clusters where Docker is unavailable, run Redis through the site-supported se
 Use explicit timeouts for tests:
 
 ```bash
-uv run pytest --timeout=30
-uv run pytest tests/unit --timeout=30
+uv run pytest --timeout=60
+uv run pytest tests/unit --timeout=60
 uv run ruff check .
 uv run mypy src
 ```

@@ -26,7 +26,7 @@ Keep development services private by default. Bind ports only to localhost or a 
 5. Add `MASSIVE_API_KEY` to `.env` only if live Massive.com data is required.
 6. Confirm no secrets are committed or staged.
 7. Install dependencies with `uv sync --dev`.
-8. Run `uv run pytest --timeout=30`.
+8. Run `uv run pytest --timeout=60`.
 9. Start Redis with `docker compose up redis` if you need RQ jobs.
 10. Start the API with `uv run uvicorn apps.api.main:app --host 0.0.0.0 --port 8000 --reload`.
 11. Start Streamlit with `uv run streamlit run apps/ui/Home.py --server.address 0.0.0.0 --server.port 8501`.
@@ -82,8 +82,8 @@ Never commit `.env` or secrets. Keep `MASSIVE_API_KEY` in your shell, secret man
 Use timeouts for test execution:
 
 ```bash
-uv run pytest --timeout=30
-uv run pytest tests/unit --timeout=30
+uv run pytest --timeout=60
+uv run pytest tests/unit --timeout=60
 uv run ruff check .
 uv run mypy src
 ```

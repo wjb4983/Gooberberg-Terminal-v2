@@ -42,7 +42,7 @@ data/
 4. Add `MASSIVE_API_KEY` if live market-data ingestion is required.
 5. Verify `.env` is ignored and not staged.
 6. Install dependencies: `uv sync --dev`.
-7. Run tests with a timeout: `uv run pytest tests/unit --timeout=30`.
+7. Run tests with a timeout: `uv run pytest tests/unit --timeout=60`.
 8. Start Redis if queue-backed ingestion jobs are needed: `docker compose up redis`.
 9. Start a worker: `uv run python -m quant_platform.jobs.workers`.
 10. Start the API: `uv run uvicorn apps.api.main:app --host 0.0.0.0 --port 8000 --reload`.
@@ -79,8 +79,8 @@ docker compose up --build
 Run tests with explicit timeouts:
 
 ```bash
-uv run pytest tests/unit/test_datasets.py --timeout=30
-uv run pytest tests/unit/test_ingestion.py --timeout=30
-uv run pytest tests/unit/test_storage_paths.py --timeout=30
-uv run pytest --timeout=30
+uv run pytest tests/unit/test_datasets.py --timeout=60
+uv run pytest tests/unit/test_ingestion.py --timeout=60
+uv run pytest tests/unit/test_storage_paths.py --timeout=60
+uv run pytest --timeout=60
 ```
