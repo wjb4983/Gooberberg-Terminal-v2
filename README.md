@@ -125,6 +125,7 @@ Make sure `.env` is not staged.
 ## More documentation
 
 - [Architecture](docs/architecture.md)
+- [Experiment queueing](docs/experiment_queueing.md)
 - [Data lake](docs/data_lake.md)
 - [HPC setup](docs/hpc_setup.md)
 - [Massive provider](docs/massive_provider.md)
