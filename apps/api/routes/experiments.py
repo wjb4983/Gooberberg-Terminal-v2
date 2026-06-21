@@ -18,7 +18,10 @@ from quant_platform.data.storage.catalog import (
     feature_sets,
     model_definitions,
 )
-from quant_platform.experiments.queueing import build_training_experiment_payload
+from quant_platform.experiments.queueing import (
+    ExperimentKind,
+    build_training_experiment_payload,
+)
 from quant_platform.jobs.queue import enqueue_training_job
 from quant_platform.training.schemas import (
     EarlyStoppingConfig,
@@ -66,6 +69,7 @@ class ExperimentQueueRequest(BaseModel):
     dataset_id: int
     feature_set_id: int | None = None
     model_id: int
+    experiment_kind: ExperimentKind = ExperimentKind.SUPERVISED_TRAINING
     task_type: TaskType = TaskType.REGRESSION
     target: TargetDefinition = Field(default_factory=TargetDefinition)
     split: SplitConfig
@@ -196,21 +200,27 @@ def queue_experiment(request: ExperimentQueueRequest) -> QueuedExperimentRespons
             catalog, feature_sets, request.feature_set_id, "feature set"
         )
 
-    payload = build_training_experiment_payload(
-        experiment_name=request.name,
-        dataset=dataset,
-        model=model,
-        feature_set=feature_set,
-        dataset_id=request.dataset_id,
-        feature_set_id=request.feature_set_id,
-        model_id=request.model_id,
-        task_type=request.task_type,
-        target=request.target,
-        split=request.split,
-        training=request.training,
-        metadata=request.metadata,
-    )
+    try:
+        payload = build_training_experiment_payload(
+            experiment_name=request.name,
+            dataset=dataset,
+            model=model,
+            feature_set=feature_set,
+            dataset_id=request.dataset_id,
+            feature_set_id=request.feature_set_id,
+            model_id=request.model_id,
+            experiment_kind=request.experiment_kind,
+            task_type=request.task_type,
+            target=request.target,
+            split=request.split,
+            training=request.training,
+            metadata=request.metadata,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     parameters = {
+        "experiment_kind": payload["experiment_kind"],
+        "model_family": payload["model_family"],
         "task_type": payload["task_type"],
         "target": payload["target"],
         "split": payload["split"],

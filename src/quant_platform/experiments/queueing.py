@@ -4,10 +4,31 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from datetime import date, datetime
-from enum import Enum
+from enum import Enum, StrEnum
 from typing import Any
 
+from quant_platform.models.schemas import ModelType
+
 JsonObject = dict[str, Any]
+
+
+class ExperimentKind(StrEnum):
+    """Experiment kinds accepted by queue payload builders."""
+
+    SUPERVISED_TRAINING = "supervised_training"
+    MARKOV_MODEL = "markov_model"
+    CUSTOM_MODEL = "custom_model"
+
+
+class ModelFamily(StrEnum):
+    """Runtime model-family groups used to route queued experiments."""
+
+    NEURAL_NETWORK = "neural_network"
+    MARKOV = "markov"
+    CUSTOM = "custom"
+
+
+_NEURAL_NETWORK_MODEL_TYPES = {model_type.value for model_type in ModelType}
 
 
 def _jsonable(value: Any) -> Any:
@@ -56,6 +77,44 @@ def _optional_text(value: Any) -> str | None:
     return normalized or None
 
 
+def _experiment_kind(value: Any) -> ExperimentKind:
+    try:
+        return (
+            value if isinstance(value, ExperimentKind) else ExperimentKind(str(value))
+        )
+    except ValueError as exc:
+        supported = ", ".join(kind.value for kind in ExperimentKind)
+        raise ValueError(
+            f"unsupported experiment kind: {value!r}; expected one of: {supported}"
+        ) from exc
+
+
+def _metadata_model_family(metadata: Mapping[str, Any]) -> str | None:
+    value = metadata.get("model_family") or metadata.get("family")
+    return _optional_text(value)
+
+
+def _derive_model_family(model_mapping: Mapping[str, Any]) -> str | None:
+    model_type = _optional_text(model_mapping.get("model_type"))
+    if model_type in _NEURAL_NETWORK_MODEL_TYPES:
+        return ModelFamily.NEURAL_NETWORK.value
+    metadata = _mapping(model_mapping.get("metadata"), "model.metadata")
+    return _metadata_model_family(metadata)
+
+
+def _validate_supported_routing(kind: ExperimentKind, model_family: str | None) -> None:
+    if kind != ExperimentKind.SUPERVISED_TRAINING:
+        raise ValueError(
+            f"unsupported experiment kind for queueing: {kind.value}; "
+            f"only {ExperimentKind.SUPERVISED_TRAINING.value} neural-network experiments can run today"
+        )
+    if model_family != ModelFamily.NEURAL_NETWORK.value:
+        raise ValueError(
+            f"unsupported model family for {kind.value}: {model_family or 'unknown'}; "
+            f"only {ModelFamily.NEURAL_NETWORK.value} experiments can run today"
+        )
+
+
 def build_training_experiment_payload(
     *,
     experiment_name: str,
@@ -65,6 +124,7 @@ def build_training_experiment_payload(
     dataset_id: int | None = None,
     feature_set_id: int | None = None,
     model_id: int | None = None,
+    experiment_kind: ExperimentKind | str = ExperimentKind.SUPERVISED_TRAINING,
     task_type: Any,
     target: Mapping[str, Any] | Any,
     split: Mapping[str, Any] | Any,
@@ -81,6 +141,9 @@ def build_training_experiment_payload(
     dataset_mapping = _mapping(dataset, "dataset")
     model_mapping = _mapping(model, "model")
     feature_mapping = _mapping(feature_set, "feature_set")
+    kind = _experiment_kind(experiment_kind)
+    model_family = _derive_model_family(model_mapping)
+    _validate_supported_routing(kind, model_family)
 
     resolved_dataset_id = _required_int(
         dataset_id if dataset_id is not None else dataset_mapping.get("id"),
@@ -100,6 +163,8 @@ def build_training_experiment_payload(
     )
 
     payload: JsonObject = {
+        "experiment_kind": kind.value,
+        "model_family": model_family,
         "experiment_name": _required_text(experiment_name, "experiment_name"),
         "dataset_id": resolved_dataset_id,
         "dataset_name": _required_text(dataset_mapping.get("name"), "dataset_name"),

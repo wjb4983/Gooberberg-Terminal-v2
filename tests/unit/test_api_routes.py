@@ -136,3 +136,64 @@ def test_queue_experiment_uses_queue_helper(monkeypatch, tmp_path) -> None:
     assert queued_payloads == [body["payload"]]
     assert queued_payloads[0]["experiment_name"] == "nightly training"
     assert queued_payloads[0]["feature_set"] == ["close", "volume"]
+
+
+def test_queue_experiment_rejects_future_kind_before_enqueue(monkeypatch, tmp_path):
+    """Unsupported future experiment kinds should return validation errors."""
+
+    import pytest
+    from fastapi import HTTPException
+
+    from apps.api.routes import experiments as experiment_routes
+
+    catalog = MetadataCatalog(tmp_path / "metadata.sqlite")
+    catalog.create_all()
+    dataset_id = catalog.insert_row(
+        "dataset_definitions",
+        {
+            "name": "prices",
+            "version": "v1",
+            "schema": {},
+            "metadata": {},
+        },
+    )
+    model_id = catalog.insert_row(
+        "model_definitions",
+        {
+            "name": "markov-baseline",
+            "version": "v1",
+            "model_type": None,
+            "parameters": {},
+            "metadata": {"model_family": "markov"},
+        },
+    )
+
+    monkeypatch.setattr(experiment_routes, "_catalog", lambda: catalog)
+
+    def fail_enqueue_training_job(payload):
+        raise AssertionError("unsupported experiments must not be enqueued")
+
+    monkeypatch.setattr(
+        experiment_routes, "enqueue_training_job", fail_enqueue_training_job
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        experiment_routes.queue_experiment(
+            experiment_routes.ExperimentQueueRequest.model_validate(
+                {
+                    "name": "markov experiment",
+                    "dataset_id": dataset_id,
+                    "model_id": model_id,
+                    "experiment_kind": "markov_model",
+                    "split": {
+                        "train_start": "2024-01-01",
+                        "train_end": "2024-01-31",
+                        "validation_start": "2024-02-01",
+                        "validation_end": "2024-02-15",
+                    },
+                }
+            )
+        )
+
+    assert exc_info.value.status_code == 422
+    assert "unsupported experiment kind for queueing" in str(exc_info.value.detail)
