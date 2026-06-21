@@ -9,7 +9,6 @@ from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
-from quant_platform.common.enums import TaskType as JobTaskType
 from quant_platform.config import get_settings
 from quant_platform.data.storage.catalog import (
     MetadataCatalog,
@@ -19,6 +18,7 @@ from quant_platform.data.storage.catalog import (
     feature_sets,
     model_definitions,
 )
+from quant_platform.jobs.queue import enqueue_training_job
 from quant_platform.training.schemas import (
     EarlyStoppingConfig,
     LossName,
@@ -227,12 +227,12 @@ def queue_experiment(request: ExperimentQueueRequest) -> QueuedExperimentRespons
         },
     )
     payload["experiment_id"] = experiment_id
-    job_id = catalog.insert_row(
-        "jobs",
-        {"job_type": JobTaskType.TRAIN.value, "status": "queued", "payload": payload},
-    )
+    queued = enqueue_training_job(payload)
     return QueuedExperimentResponse(
-        experiment_id=experiment_id, job_id=job_id, status="queued", payload=payload
+        experiment_id=experiment_id,
+        job_id=queued.catalog_job_id,
+        status=queued.status,
+        payload=payload,
     )
 
 
