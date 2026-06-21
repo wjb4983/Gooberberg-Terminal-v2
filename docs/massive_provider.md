@@ -40,19 +40,15 @@ When developing remotely, connect to the host with VSCode Remote - SSH over Tail
 5. Check that `.env` is ignored and not staged.
 6. Install dependencies: `uv sync --dev`.
 7. Run provider tests with a timeout: `uv run pytest tests/unit/test_massive_provider.py --timeout=60`.
-8. Start Redis if using queued ingestion: `docker compose up redis`.
-9. Start the RQ worker: `uv run python -m quant_platform.jobs.workers`.
-10. Start the API: `uv run uvicorn apps.api.main:app --host 0.0.0.0 --port 8000 --reload`.
-11. Start Streamlit: `uv run streamlit run apps/ui/Home.py --server.address 0.0.0.0 --server.port 8501`.
+8. Start the full local stack with `uv run gooberberg-dev`.
+
 
 ## Direct Python execution
 
 Run services directly during development:
 
 ```bash
-uv run python -m quant_platform.jobs.workers
-uv run uvicorn apps.api.main:app --host 0.0.0.0 --port 8000 --reload
-uv run streamlit run apps/ui/Home.py --server.address 0.0.0.0 --server.port 8501
+uv run gooberberg-dev
 ```
 
 ## Optional Docker Compose services
@@ -60,13 +56,10 @@ uv run streamlit run apps/ui/Home.py --server.address 0.0.0.0 --server.port 8501
 Use Compose for Redis or full local service containers when useful:
 
 ```bash
-docker compose up redis
-docker compose up api
-docker compose up ui
 docker compose up --build
 ```
 
-For the direct Python workflow, Redis is usually the only Compose service needed.
+For the direct Python workflow, `uv run gooberberg-dev` starts Redis automatically unless you pass `--skip-redis`.
 
 ## Tests with timeouts
 

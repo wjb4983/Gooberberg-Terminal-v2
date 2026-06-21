@@ -30,27 +30,11 @@ cp .env.example .env
 # Edit .env and set MASSIVE_API_KEY if you want live Massive.com data.
 # Leave MASSIVE_API_KEY blank if you only want fake/mock local data.
 uv sync --dev
-uv run python scripts/init_metadata_db.py
-docker compose up -d redis
 uv run pytest tests --timeout=60
+uv run gooberberg-dev
 ```
 
-Then start the three app processes in three separate VSCode terminals:
-
-```bash
-cd /workspace/Gooberberg-Terminal-v2
-uv run uvicorn apps.api.main:app --host 0.0.0.0 --port 8000 --reload
-```
-
-```bash
-cd /workspace/Gooberberg-Terminal-v2
-uv run streamlit run apps/ui/Home.py --server.address 0.0.0.0 --server.port 8501
-```
-
-```bash
-cd /workspace/Gooberberg-Terminal-v2
-uv run python -m quant_platform.jobs.workers
-```
+The single run command initializes the metadata database, starts Redis with Docker Compose, and runs the FastAPI API, Streamlit UI, and RQ worker together. Use `Ctrl+C` once to stop the app processes.
 
 Open:
 
@@ -65,21 +49,7 @@ If the repo is already set up and you just want to run it:
 
 ```bash
 cd /workspace/Gooberberg-Terminal-v2
-docker compose up -d redis
-```
-
-Start these in three separate terminals:
-
-```bash
-uv run uvicorn apps.api.main:app --host 0.0.0.0 --port 8000 --reload
-```
-
-```bash
-uv run streamlit run apps/ui/Home.py --server.address 0.0.0.0 --server.port 8501
-```
-
-```bash
-uv run python -m quant_platform.jobs.workers
+uv run gooberberg-dev
 ```
 
 ## After pulling new changes
@@ -90,12 +60,11 @@ Run this after every `git pull`:
 cd /workspace/Gooberberg-Terminal-v2
 git pull
 uv sync --dev
-uv run python scripts/init_metadata_db.py
-docker compose up -d redis
 uv run pytest tests --timeout=60
+uv run gooberberg-dev
 ```
 
-Then restart the API, UI, and worker terminals if they were already running.
+If the stack was already running, stop it with `Ctrl+C` and rerun the command above.
 
 ## Useful commands
 
@@ -114,6 +83,12 @@ uv run ruff format .
 
 # Type check
 uv run mypy src
+
+# Run the full local stack with one command
+uv run gooberberg-dev
+
+# Run the stack without starting Docker-managed Redis
+uv run gooberberg-dev --skip-redis
 
 # Stop Redis and other compose services
 docker compose down

@@ -43,9 +43,7 @@ data/
 5. Verify `.env` is ignored and not staged.
 6. Install dependencies: `uv sync --dev`.
 7. Run tests with a timeout: `uv run pytest tests/unit --timeout=60`.
-8. Start Redis if queue-backed ingestion jobs are needed: `docker compose up redis`.
-9. Start a worker: `uv run python -m quant_platform.jobs.workers`.
-10. Start the API: `uv run uvicorn apps.api.main:app --host 0.0.0.0 --port 8000 --reload`.
+8. Start the full local stack with `uv run gooberberg-dev`.
 
 ## Direct Python execution
 
@@ -53,24 +51,14 @@ Use direct commands for services that interact with data-lake state:
 
 ```bash
 uv run python scripts/init_metadata_db.py
-uv run python -m quant_platform.jobs.workers
-uv run uvicorn apps.api.main:app --host 0.0.0.0 --port 8000 --reload
-uv run streamlit run apps/ui/Home.py --server.address 0.0.0.0 --server.port 8501
+uv run gooberberg-dev
 ```
 
 ## Optional Docker Compose services
 
-Redis can be run with Compose while Python processes run directly:
+Redis can be run with Compose while Python processes run directly, but `uv run gooberberg-dev` starts it for the default workflow. The API, UI, Redis, and worker container services are also available when needed:
 
 ```bash
-docker compose up redis
-```
-
-The API and UI container services are also available when needed:
-
-```bash
-docker compose up api
-docker compose up ui
 docker compose up --build
 ```
 

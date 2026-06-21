@@ -27,19 +27,15 @@ Keep development services private by default. Bind ports only to localhost or a 
 6. Confirm no secrets are committed or staged.
 7. Install dependencies with `uv sync --dev`.
 8. Run `uv run pytest --timeout=60`.
-9. Start Redis with `docker compose up redis` if you need RQ jobs.
-10. Start the API with `uv run uvicorn apps.api.main:app --host 0.0.0.0 --port 8000 --reload`.
-11. Start Streamlit with `uv run streamlit run apps/ui/Home.py --server.address 0.0.0.0 --server.port 8501`.
-12. Start a worker with `uv run python -m quant_platform.jobs.workers` when queued jobs should execute.
+9. Start the full local stack with `uv run gooberberg-dev`.
+
 
 ## Direct Python execution
 
 Direct Python execution is the preferred development path:
 
 ```bash
-uv run uvicorn apps.api.main:app --host 0.0.0.0 --port 8000 --reload
-uv run streamlit run apps/ui/Home.py --server.address 0.0.0.0 --server.port 8501
-uv run python -m quant_platform.jobs.workers
+uv run gooberberg-dev
 ```
 
 This keeps process ownership in the VSCode terminal, simplifies debugging, and avoids rebuilding containers for every source edit.
@@ -49,13 +45,10 @@ This keeps process ownership in the VSCode terminal, simplifies debugging, and a
 Docker Compose can run Redis and the bundled app services when container parity is useful:
 
 ```bash
-docker compose up redis
-docker compose up api
-docker compose up ui
 docker compose up --build
 ```
 
-Use Compose selectively. Redis is the most common service to run in Docker while API, UI, and worker processes run directly with `uv`.
+Use Compose selectively when container parity is useful; the one-command `uv` workflow is usually faster for development.
 
 ## Configuration and secrets
 

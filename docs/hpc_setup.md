@@ -29,10 +29,8 @@ Do not expose development ports publicly from an HPC or shared server. Prefer SS
 6. Confirm secrets are not staged for commit.
 7. Install dependencies: `uv sync --dev`.
 8. Run tests with a timeout: `uv run pytest --timeout=60`.
-9. Start optional Redis with `docker compose up redis` if Docker is available and allowed.
-10. Start the API directly: `uv run uvicorn apps.api.main:app --host 0.0.0.0 --port 8000 --reload`.
-11. Start Streamlit directly: `uv run streamlit run apps/ui/Home.py --server.address 0.0.0.0 --server.port 8501`.
-12. Start an RQ worker directly: `uv run python -m quant_platform.jobs.workers`.
+9. Start the full local stack with `uv run gooberberg-dev` if Docker is available and allowed, or add `--skip-redis` when Redis is already running.
+
 
 ## Environment and secrets
 
@@ -59,9 +57,7 @@ Never commit `.env`, `MASSIVE_API_KEY`, SSH keys, cluster tokens, scheduler cred
 Direct execution is preferred on HPC development nodes because it avoids unnecessary container rebuilds and works well with VSCode terminals:
 
 ```bash
-uv run uvicorn apps.api.main:app --host 0.0.0.0 --port 8000 --reload
-uv run streamlit run apps/ui/Home.py --server.address 0.0.0.0 --server.port 8501
-uv run python -m quant_platform.jobs.workers
+uv run gooberberg-dev
 ```
 
 If a scheduler is required for long jobs, wrap these commands in the site-approved scheduler mechanism rather than running on shared login nodes.
@@ -71,9 +67,6 @@ If a scheduler is required for long jobs, wrap these commands in the site-approv
 Only use Docker Compose where containers are permitted by the remote environment:
 
 ```bash
-docker compose up redis
-docker compose up api
-docker compose up ui
 docker compose up --build
 ```
 
