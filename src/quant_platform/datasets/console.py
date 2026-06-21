@@ -255,6 +255,15 @@ def queue_ingestion(
             "payload": payload,
         },
     )
+    resolved_catalog.insert_row(
+        "job_logs",
+        {
+            "job_id": job_id,
+            "level": "info",
+            "message": "Queued dataset ingestion job.",
+            "metadata": payload,
+        },
+    )
     return QueuedDatasetIngestion(
         dataset_id=resolved_dataset_id,
         job_id=job_id,

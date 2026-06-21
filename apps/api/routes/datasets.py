@@ -205,6 +205,15 @@ def queue_dataset_ingest(
             "payload": payload,
         },
     )
+    catalog.insert_row(
+        "job_logs",
+        {
+            "job_id": job_id,
+            "level": "info",
+            "message": "Queued dataset ingestion job.",
+            "metadata": payload,
+        },
+    )
     return DatasetIngestResponse(
         job_id=job_id,
         status="queued",

@@ -137,9 +137,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         processes = [_start_process(service) for service in services]
         ready_message = (
-            "[ready] API: http://localhost:{api_port}/docs | "
-            "UI: http://localhost:{ui_port}"
-        ).format(api_port=args.api_port, ui_port=args.ui_port)
+            f"[ready] API: http://localhost:{args.api_port}/docs | "
+            f"UI: http://localhost:{args.ui_port}"
+        )
         print(ready_message, flush=True)
         while True:
             for process, service in zip(processes, services, strict=True):

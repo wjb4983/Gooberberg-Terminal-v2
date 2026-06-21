@@ -56,13 +56,41 @@ def _update_job(
         connection.execute(statement)
 
 
+def _append_job_log(
+    catalog_job_id: int,
+    message: str,
+    *,
+    level: str = "info",
+    metadata: Mapping[str, Any] | None = None,
+) -> None:
+    catalog = _catalog()
+    catalog.insert_row(
+        "job_logs",
+        {
+            "job_id": catalog_job_id,
+            "level": level,
+            "message": message,
+            "metadata": dict(metadata or {}),
+        },
+    )
+
+
 def _run_with_metadata(
     catalog_job_id: int, handler: Any, payload: JsonObject
 ) -> JsonObject:
     _update_job(catalog_job_id, status=JobStatus.RUNNING, started_at=_utcnow())
+    _append_job_log(
+        catalog_job_id,
+        "Job started.",
+        metadata={
+            "symbols": payload.get("symbols", []),
+            "data_types": payload.get("data_types", []),
+        },
+    )
     try:
-        result = handler(payload)
+        result = handler({**payload, "catalog_job_id": catalog_job_id})
     except Exception as exc:
+        _append_job_log(catalog_job_id, f"Job failed: {exc}", level="error")
         _update_job(
             catalog_job_id,
             status=JobStatus.FAILED,
@@ -70,6 +98,7 @@ def _run_with_metadata(
             completed_at=_utcnow(),
         )
         raise
+    _append_job_log(catalog_job_id, "Job completed.", metadata={"result": result})
     _update_job(
         catalog_job_id,
         status=JobStatus.SUCCEEDED,
@@ -91,18 +120,38 @@ def _provider_from_payload(payload: Mapping[str, Any]) -> Any:
 
 
 def _handle_ingestion(payload: JsonObject) -> JsonObject:
+    symbols = payload["symbols"]
+    data_types = payload["data_types"]
+    _append_job_log(
+        int(payload["catalog_job_id"]),
+        "Preparing ingestion request.",
+        metadata={
+            "provider": (
+                payload.get("provider") or get_settings().default_provider.value
+            ),
+            "symbols": symbols,
+            "data_types": data_types,
+            "start": payload["start"],
+            "end": payload["end"],
+        },
+    )
     service = IngestionService(
         provider=_provider_from_payload(payload),
         catalog=_catalog(),
         data_root=get_settings().data_lake_root,
     )
     result = service.ingest_market_data(
-        symbols=payload["symbols"],
-        data_types=payload["data_types"],
+        symbols=symbols,
+        data_types=data_types,
         start=payload["start"],
         end=payload["end"],
         asset_class=payload.get("asset_class", "equity"),
         resolution=payload.get("resolution"),
+    )
+    _append_job_log(
+        int(payload["catalog_job_id"]),
+        "Ingestion wrote artifacts.",
+        metadata={"written": result.written, "skipped": result.skipped},
     )
     return {
         "requested": result.requested,
