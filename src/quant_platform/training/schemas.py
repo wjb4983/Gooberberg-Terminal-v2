@@ -98,6 +98,7 @@ class TrainingConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", use_enum_values=False)
 
     experiment_name: str = "synthetic-training-run"
+    experiment_id: int | None = None
     dataset_name: str = "synthetic_prices"
     dataset_version: str = "1"
     model_name: str = "synthetic_mlp"

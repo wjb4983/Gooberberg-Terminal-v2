@@ -85,20 +85,29 @@ def run_training(
     device = detect_device()
 
     registry = registry or ExperimentRegistry()
-    experiment_id = registry.create_experiment(
-        training_config.experiment_name,
-        status="running",
-        parameters=training_config.jsonable(),
-        metadata={
-            "dataset_name": training_config.dataset_name,
-            "dataset_version": training_config.dataset_version,
-            "model_name": training_config.model_name,
-            "model_type": training_config.model_type.value,
-            "task_type": training_config.task_type.value,
-            "walk_forward_enabled": training_config.walk_forward.enabled,
-            "early_stopping_enabled": training_config.early_stopping.enabled,
-        },
-    )
+    experiment_metadata = {
+        "dataset_name": training_config.dataset_name,
+        "dataset_version": training_config.dataset_version,
+        "model_name": training_config.model_name,
+        "model_type": training_config.model_type.value,
+        "task_type": training_config.task_type.value,
+        "walk_forward_enabled": training_config.walk_forward.enabled,
+        "early_stopping_enabled": training_config.early_stopping.enabled,
+    }
+    if training_config.experiment_id is None:
+        experiment_id = registry.create_experiment(
+            training_config.experiment_name,
+            status="running",
+            parameters=training_config.jsonable(),
+            metadata=experiment_metadata,
+        )
+    else:
+        experiment_id = training_config.experiment_id
+        registry.start_experiment(
+            experiment_id,
+            parameters=training_config.jsonable(),
+            metadata=experiment_metadata,
+        )
 
     datamodule = SyntheticDataModule(training_config)
     loaders = datamodule.dataloaders()
