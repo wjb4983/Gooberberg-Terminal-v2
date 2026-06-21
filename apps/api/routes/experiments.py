@@ -18,6 +18,7 @@ from quant_platform.data.storage.catalog import (
     feature_sets,
     model_definitions,
 )
+from quant_platform.experiments.queueing import build_training_experiment_payload
 from quant_platform.jobs.queue import enqueue_training_job
 from quant_platform.training.schemas import (
     EarlyStoppingConfig,
@@ -195,24 +196,25 @@ def queue_experiment(request: ExperimentQueueRequest) -> QueuedExperimentRespons
             catalog, feature_sets, request.feature_set_id, "feature set"
         )
 
-    feature_names = list((feature_set or {}).get("features") or [])
+    payload = build_training_experiment_payload(
+        experiment_name=request.name,
+        dataset=dataset,
+        model=model,
+        feature_set=feature_set,
+        dataset_id=request.dataset_id,
+        feature_set_id=request.feature_set_id,
+        model_id=request.model_id,
+        task_type=request.task_type,
+        target=request.target,
+        split=request.split,
+        training=request.training,
+        metadata=request.metadata,
+    )
     parameters = {
-        "task_type": request.task_type.value,
-        "target": request.target.model_dump(mode="json"),
-        "split": request.split.model_dump(mode="json"),
-        "training": request.training.model_dump(mode="json"),
-    }
-    payload = {
-        "experiment_name": request.name.strip(),
-        "dataset_id": request.dataset_id,
-        "dataset_name": dataset["name"],
-        "dataset_version": dataset["version"],
-        "feature_set_id": request.feature_set_id,
-        "feature_set": feature_names,
-        "model_id": request.model_id,
-        "model_name": model["name"],
-        "model_type": model.get("model_type"),
-        **parameters,
+        "task_type": payload["task_type"],
+        "target": payload["target"],
+        "split": payload["split"],
+        "training": payload["training"],
     }
     experiment_id = catalog.insert_row(
         "experiments",
@@ -223,7 +225,7 @@ def queue_experiment(request: ExperimentQueueRequest) -> QueuedExperimentRespons
             "dataset_id": request.dataset_id,
             "feature_set_id": request.feature_set_id,
             "parameters": parameters,
-            "metadata": {**request.metadata, "queued_payload": payload},
+            "metadata": {**payload["metadata"], "queued_payload": payload},
         },
     )
     payload["experiment_id"] = experiment_id

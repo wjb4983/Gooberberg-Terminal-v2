@@ -11,6 +11,7 @@ import streamlit as st
 from quant_platform.common.enums import TaskType as JobTaskType
 from quant_platform.config import get_settings
 from quant_platform.data.storage.catalog import MetadataCatalog, experiment_metrics
+from quant_platform.experiments.queueing import build_training_experiment_payload
 from quant_platform.training.schemas import LossName, OptimizerName, TaskType
 
 
@@ -150,41 +151,38 @@ with st.form("queue_experiment"):
         )
         hidden_size = st.number_input("Hidden size", min_value=1, value=16, step=1)
 
-    feature_names = list((feature_set or {}).get("features") or [])
-    payload = {
-        "experiment_name": name.strip(),
-        "dataset_id": (dataset or {}).get("id"),
-        "dataset_name": (dataset or {}).get("name"),
-        "feature_set_id": (feature_set or {}).get("id"),
-        "feature_set": feature_names,
-        "model_id": (model or {}).get("id"),
-        "model_name": (model or {}).get("name"),
-        "model_type": (model or {}).get("model_type"),
-        "task_type": task_type.value,
-        "target": {
-            "name": target_name,
-            "horizon": int(target_horizon),
-            "expression": target_expression,
-        },
-        "split": {
-            "train_start": train_start.isoformat(),
-            "train_end": train_end.isoformat(),
-            "validation_start": validation_start.isoformat(),
-            "validation_end": validation_end.isoformat(),
-            "test_start": test_start.isoformat(),
-            "test_end": test_end.isoformat(),
-        },
-        "training": {
-            "epochs": int(epochs),
-            "batch_size": int(batch_size),
-            "optimizer": optimizer.value,
-            "learning_rate": float(learning_rate),
-            "loss_function": loss_function.value,
-            "sequence_length": int(sequence_length),
-            "hidden_size": int(hidden_size),
-            "seed": int(seed),
-        },
-    }
+    payload: dict[str, Any] = {}
+    if dataset is not None and model is not None:
+        payload = build_training_experiment_payload(
+            experiment_name=name,
+            dataset=dataset,
+            model=model,
+            feature_set=feature_set,
+            task_type=task_type,
+            target={
+                "name": target_name,
+                "horizon": int(target_horizon),
+                "expression": target_expression,
+            },
+            split={
+                "train_start": train_start,
+                "train_end": train_end,
+                "validation_start": validation_start,
+                "validation_end": validation_end,
+                "test_start": test_start,
+                "test_end": test_end,
+            },
+            training={
+                "epochs": int(epochs),
+                "batch_size": int(batch_size),
+                "optimizer": optimizer,
+                "learning_rate": float(learning_rate),
+                "loss_function": loss_function,
+                "sequence_length": int(sequence_length),
+                "hidden_size": int(hidden_size),
+                "seed": int(seed),
+            },
+        )
     with st.expander("Queued training payload preview", expanded=False):
         st.json(payload)
     submitted = st.form_submit_button(
