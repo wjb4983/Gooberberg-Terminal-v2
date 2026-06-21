@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from apps.api.main import app
+
+from quant_platform.data.storage.catalog import MetadataCatalog
 
 
 def test_api_v1_routes_are_registered() -> None:
@@ -58,3 +62,77 @@ def test_api_v1_routes_have_expected_methods() -> None:
     assert "get" in paths["/api/v1/jobs/{job_id}"]
     assert "get" in paths["/api/v1/jobs/{job_id}/logs"]
     assert "get" in paths["/api/v1/monitoring"]
+
+
+def test_queue_experiment_uses_queue_helper(monkeypatch, tmp_path) -> None:
+    """Queueing an experiment should delegate job creation to the queue helper."""
+
+    from apps.api.routes import experiments as experiment_routes
+
+    catalog = MetadataCatalog(tmp_path / "metadata.sqlite")
+    catalog.create_all()
+    dataset_id = catalog.insert_row(
+        "dataset_definitions",
+        {
+            "name": "prices",
+            "version": "v1",
+            "schema": {},
+            "metadata": {},
+        },
+    )
+    model_id = catalog.insert_row(
+        "model_definitions",
+        {
+            "name": "baseline",
+            "version": "v1",
+            "model_type": "lstm",
+            "parameters": {},
+            "metadata": {},
+        },
+    )
+    feature_set_id = catalog.insert_row(
+        "feature_sets",
+        {
+            "name": "basic-features",
+            "version": "v1",
+            "features": ["close", "volume"],
+            "dataset_id": dataset_id,
+            "metadata": {},
+        },
+    )
+
+    monkeypatch.setattr(experiment_routes, "_catalog", lambda: catalog)
+    queued_payloads = []
+
+    def fake_enqueue_training_job(payload):
+        queued_payloads.append(payload.copy())
+        return SimpleNamespace(catalog_job_id=42, status="queued")
+
+    monkeypatch.setattr(
+        experiment_routes, "enqueue_training_job", fake_enqueue_training_job
+    )
+
+    response = experiment_routes.queue_experiment(
+        experiment_routes.ExperimentQueueRequest.model_validate(
+            {
+                "name": " nightly training ",
+                "dataset_id": dataset_id,
+                "feature_set_id": feature_set_id,
+                "model_id": model_id,
+                "split": {
+                    "train_start": "2024-01-01",
+                    "train_end": "2024-01-31",
+                    "validation_start": "2024-02-01",
+                    "validation_end": "2024-02-15",
+                },
+            }
+        )
+    )
+
+    body = response.model_dump(mode="json")
+    assert body["job_id"] == 42
+    assert body["status"] == "queued"
+    assert body["experiment_id"] == queued_payloads[0]["experiment_id"]
+    assert queued_payloads == [body["payload"]]
+    assert queued_payloads[0]["experiment_name"] == "nightly training"
+    assert queued_payloads[0]["feature_set"] == ["close", "volume"]
