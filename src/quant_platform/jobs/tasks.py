@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import update
+from sqlalchemy import select, update
 
 from quant_platform.common.enums import JobStatus, Provider
 from quant_platform.config.settings import get_settings
@@ -15,7 +15,9 @@ from quant_platform.data.providers import (
     FakeMarketDataProvider,
     MassiveMarketDataProvider,
 )
-from quant_platform.data.storage.catalog import MetadataCatalog, jobs
+from quant_platform.data.storage.catalog import MetadataCatalog, experiments, jobs
+from quant_platform.training.runner import run_training
+from quant_platform.training.schemas import TrainingConfig
 
 JsonObject = dict[str, Any]
 
@@ -162,10 +164,119 @@ def _handle_ingestion(payload: JsonObject) -> JsonObject:
     }
 
 
-def _handle_training(payload: JsonObject) -> JsonObject:
-    """Record a lightweight training job until model training is implemented."""
+def _experiment_metadata(
+    catalog: MetadataCatalog, experiment_id: int
+) -> dict[str, Any]:
+    with catalog.engine.connect() as connection:
+        row = (
+            connection.execute(
+                select(experiments.c.metadata).where(experiments.c.id == experiment_id)
+            )
+            .mappings()
+            .first()
+        )
+    if row is None:
+        raise ValueError(f"experiment does not exist: {experiment_id}")
+    return dict(row.get("metadata") or {})
 
-    return {"status": "recorded", "job": "training", "payload": payload}
+
+def _update_experiment(
+    experiment_id: int,
+    *,
+    status: str,
+    metadata: Mapping[str, Any] | None = None,
+    started_at: datetime | None = None,
+    completed_at: datetime | None = None,
+) -> None:
+    catalog = _catalog()
+    values: dict[str, Any] = {"status": status}
+    if metadata is not None:
+        values["metadata"] = dict(metadata)
+    if started_at is not None:
+        values["started_at"] = started_at
+    if completed_at is not None:
+        values["completed_at"] = completed_at
+    updated_rows = catalog.update_row("experiments", experiment_id, values)
+    if updated_rows == 0:
+        raise ValueError(f"experiment does not exist: {experiment_id}")
+
+
+def _training_config_from_payload(payload: Mapping[str, Any]) -> TrainingConfig:
+    config_payload = dict(payload)
+    config_payload.pop("catalog_job_id", None)
+    config_payload.pop("rq_job_id", None)
+    if "split" in config_payload and "date_split" not in config_payload:
+        config_payload["date_split"] = config_payload.pop("split")
+    training = config_payload.pop("training", None)
+    if isinstance(training, Mapping):
+        config_payload.update(dict(training))
+    allowed_fields = set(TrainingConfig.model_fields)
+    config_payload = {
+        key: value for key, value in config_payload.items() if key in allowed_fields
+    }
+    return TrainingConfig.model_validate(config_payload)
+
+
+def _artifact_links(result: Any) -> dict[str, str]:
+    links: dict[str, str] = {}
+    artifact_dir = getattr(result, "artifact_dir", None)
+    if artifact_dir is not None:
+        links["artifact_dir"] = str(artifact_dir)
+    manifest = getattr(result, "manifest", None)
+    manifest_files = getattr(manifest, "files", None)
+    if isinstance(manifest_files, Mapping):
+        links.update({str(key): str(value) for key, value in manifest_files.items()})
+    return links
+
+
+def _training_result_payload(result: Any) -> JsonObject:
+    if hasattr(result, "model_dump"):
+        return dict(result.model_dump(mode="json"))
+    if isinstance(result, Mapping):
+        return dict(result)
+    return {"result": str(result)}
+
+
+def _handle_training(payload: JsonObject) -> JsonObject:
+    """Run model training and persist linked experiment lifecycle metadata."""
+
+    experiment_id = int(payload["experiment_id"])
+    started_at = _utcnow()
+    current_metadata = _experiment_metadata(_catalog(), experiment_id)
+    _update_experiment(
+        experiment_id,
+        status="running",
+        metadata=current_metadata,
+        started_at=started_at,
+    )
+    try:
+        result = run_training(_training_config_from_payload(payload))
+    except Exception as exc:
+        failed_metadata = {
+            **_experiment_metadata(_catalog(), experiment_id),
+            "error": str(exc)[:500],
+        }
+        _update_experiment(
+            experiment_id,
+            status="failed",
+            metadata=failed_metadata,
+            completed_at=_utcnow(),
+        )
+        raise
+
+    artifacts = _artifact_links(result)
+    succeeded_metadata = {
+        **_experiment_metadata(_catalog(), experiment_id),
+        "artifacts": artifacts,
+        "artifact_links": artifacts,
+    }
+    _update_experiment(
+        experiment_id,
+        status="succeeded",
+        metadata=succeeded_metadata,
+        completed_at=_utcnow(),
+    )
+    return _training_result_payload(result)
 
 
 def _handle_backtest(payload: JsonObject) -> JsonObject:
@@ -181,7 +292,7 @@ def run_ingestion_job(catalog_job_id: int, payload: JsonObject) -> JsonObject:
 
 
 def run_training_job(catalog_job_id: int, payload: JsonObject) -> JsonObject:
-    """Execute a training job placeholder and persist lifecycle metadata."""
+    """Execute a training job and persist lifecycle metadata."""
 
     return _run_with_metadata(catalog_job_id, _handle_training, payload)
 
