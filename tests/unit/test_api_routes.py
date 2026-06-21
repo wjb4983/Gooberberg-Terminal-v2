@@ -2,11 +2,59 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
 from types import SimpleNamespace
 
 from apps.api.main import app
 
 from quant_platform.data.storage.catalog import MetadataCatalog
+
+
+def _asgi_post_json(path: str, payload: dict[str, object]) -> tuple[int, bytes]:
+    """POST JSON to the FastAPI ASGI app without requiring httpx/TestClient."""
+
+    async def _request() -> tuple[int, bytes]:
+        body = json.dumps(payload).encode()
+        messages: list[dict[str, object]] = []
+        received = False
+
+        scope = {
+            "type": "http",
+            "asgi": {"version": "3.0"},
+            "http_version": "1.1",
+            "method": "POST",
+            "scheme": "http",
+            "path": path,
+            "raw_path": path.encode(),
+            "query_string": b"",
+            "headers": [(b"content-type", b"application/json")],
+            "client": ("testclient", 50000),
+            "server": ("testserver", 80),
+        }
+
+        async def receive() -> dict[str, object]:
+            nonlocal received
+            if received:
+                return {"type": "http.disconnect"}
+            received = True
+            return {"type": "http.request", "body": body, "more_body": False}
+
+        async def send(message: dict[str, object]) -> None:
+            messages.append(message)
+
+        await app(scope, receive, send)
+        response_start = next(
+            message for message in messages if message["type"] == "http.response.start"
+        )
+        response_body = b"".join(
+            message.get("body", b"")
+            for message in messages
+            if message["type"] == "http.response.body"
+        )
+        return int(response_start["status"]), response_body
+
+    return asyncio.run(_request())
 
 
 def test_api_v1_routes_are_registered() -> None:
@@ -62,6 +110,117 @@ def test_api_v1_routes_have_expected_methods() -> None:
     assert "get" in paths["/api/v1/jobs/{job_id}"]
     assert "get" in paths["/api/v1/jobs/{job_id}/logs"]
     assert "get" in paths["/api/v1/monitoring"]
+
+
+def test_post_experiment_creates_queued_job(monkeypatch, tmp_path) -> None:
+    """POST /experiments should persist experiment and job rows without Redis."""
+
+    from apps.api.routes import experiments as experiment_routes
+
+    from quant_platform.jobs import queue as job_queue_module
+
+    catalog = MetadataCatalog(tmp_path / "metadata.sqlite")
+    catalog.create_all()
+    dataset_id = catalog.insert_row(
+        "dataset_definitions",
+        {
+            "name": "tiny-prices",
+            "version": "v1",
+            "schema": {"columns": ["close", "volume"]},
+            "metadata": {"source": "unit-test"},
+        },
+    )
+    feature_set_id = catalog.insert_row(
+        "feature_sets",
+        {
+            "name": "tiny-features",
+            "version": "v1",
+            "features": ["close", "volume"],
+            "dataset_id": dataset_id,
+            "metadata": {},
+        },
+    )
+    model_id = catalog.insert_row(
+        "model_definitions",
+        {
+            "name": "tiny-lstm",
+            "version": "v1",
+            "model_type": "lstm",
+            "parameters": {"hidden_size": 4},
+            "metadata": {},
+        },
+    )
+
+    monkeypatch.setattr(experiment_routes, "_catalog", lambda: catalog)
+    monkeypatch.setattr(job_queue_module, "_catalog", lambda settings=None: catalog)
+
+    class FakeQueue:
+        name = "unit-test-training"
+
+        def __init__(self) -> None:
+            self.enqueued: list[dict[str, object]] = []
+
+        def enqueue(self, task_path, catalog_job_id, payload, *, job_id):
+            self.enqueued.append(
+                {
+                    "task_path": task_path,
+                    "catalog_job_id": catalog_job_id,
+                    "payload": dict(payload),
+                    "job_id": job_id,
+                }
+            )
+            return SimpleNamespace(id=job_id)
+
+    fake_queue = FakeQueue()
+    monkeypatch.setattr(
+        job_queue_module,
+        "job_queue",
+        lambda name=job_queue_module.DEFAULT_QUEUE_NAME, **_: fake_queue,
+    )
+
+    status_code, response_body = _asgi_post_json(
+        "/api/v1/experiments",
+        {
+            "name": "tiny api training",
+            "dataset_id": dataset_id,
+            "feature_set_id": feature_set_id,
+            "model_id": model_id,
+            "split": {
+                "train_start": "2024-01-01",
+                "train_end": "2024-01-02",
+                "validation_start": "2024-01-03",
+                "validation_end": "2024-01-04",
+            },
+            "training": {
+                "epochs": 1,
+                "batch_size": 2,
+                "sequence_length": 2,
+                "hidden_size": 4,
+                "synthetic_rows_per_day": 1,
+            },
+        },
+    )
+
+    assert status_code == 201
+    body = json.loads(response_body)
+    assert body["status"] == "queued"
+    assert body["payload"]["experiment_id"] == body["experiment_id"]
+
+    experiment_rows = catalog.list_rows("experiments")
+    assert len(experiment_rows) == 1
+    assert experiment_rows[0]["id"] == body["experiment_id"]
+    assert experiment_rows[0]["status"] == "queued"
+
+    job_rows = catalog.list_rows("jobs")
+    assert len(job_rows) == 1
+    assert job_rows[0]["id"] == body["job_id"]
+    assert job_rows[0]["status"] == "queued"
+    assert job_rows[0]["payload"]["experiment_id"] == body["experiment_id"]
+
+    assert len(fake_queue.enqueued) == 1
+    queued_call = fake_queue.enqueued[0]
+    assert queued_call["catalog_job_id"] == body["job_id"]
+    assert queued_call["payload"]["experiment_id"] == body["experiment_id"]
 
 
 def test_queue_experiment_uses_queue_helper(monkeypatch, tmp_path) -> None:
@@ -142,9 +301,8 @@ def test_queue_experiment_rejects_future_kind_before_enqueue(monkeypatch, tmp_pa
     """Unsupported future experiment kinds should return validation errors."""
 
     import pytest
-    from fastapi import HTTPException
-
     from apps.api.routes import experiments as experiment_routes
+    from fastapi import HTTPException
 
     catalog = MetadataCatalog(tmp_path / "metadata.sqlite")
     catalog.create_all()
