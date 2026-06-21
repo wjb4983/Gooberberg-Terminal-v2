@@ -27,3 +27,14 @@ services:
       - .:/app
     depends_on:
       - api
+
+
+  worker:
+    build: .
+    command: uv run python -m quant_platform.jobs.workers
+    env_file:
+      - .env.example
+    volumes:
+      - .:/app
+    depends_on:
+      - redis
