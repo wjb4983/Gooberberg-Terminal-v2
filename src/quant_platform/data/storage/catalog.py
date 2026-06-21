@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from sqlalchemy import (
     JSON,
@@ -21,6 +21,7 @@ from sqlalchemy import (
     func,
     insert,
     select,
+    update,
 )
 from sqlalchemy.engine import Engine
 
@@ -236,12 +237,31 @@ class MetadataCatalog:
         table = TABLES[table_name]
         with self.engine.begin() as connection:
             result = connection.execute(insert(table).values(**dict(values)))
-            inserted_id = result.inserted_primary_key[0]
+            inserted_primary_key = result.inserted_primary_key
+            if inserted_primary_key is None:
+                raise RuntimeError(f"insert into {table_name} did not return a key")
+            inserted_id = cast(int, inserted_primary_key[0])
         return int(inserted_id)
+
+    def update_row(
+        self,
+        table_name: str,
+        row_id: int,
+        values: Mapping[str, Any],
+    ) -> int:
+        """Update a catalog row by primary key and return the number of rows changed."""
+
+        table = TABLES[table_name]
+        with self.engine.begin() as connection:
+            result = connection.execute(
+                update(table).where(table.c.id == row_id).values(**dict(values))
+            )
+        return int(result.rowcount or 0)
 
     def list_rows(self, table_name: str) -> Sequence[Mapping[str, Any]]:
         """Return all rows from a catalog table as mappings."""
 
         table = TABLES[table_name]
         with self.engine.connect() as connection:
-            return list(connection.execute(select(table)).mappings().all())
+            rows = connection.execute(select(table)).mappings().all()
+        return [dict(row) for row in rows]

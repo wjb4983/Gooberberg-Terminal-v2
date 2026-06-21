@@ -42,6 +42,27 @@ class ExperimentRegistry:
             },
         )
 
+    def start_experiment(
+        self,
+        experiment_id: int,
+        *,
+        parameters: Mapping[str, Any] | None = None,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> None:
+        """Mark an existing experiment as running and refresh run context."""
+
+        updated_rows = self.catalog.update_row(
+            "experiments",
+            experiment_id,
+            {
+                "status": "running",
+                "parameters": dict(parameters or {}),
+                "metadata": dict(metadata or {}),
+            },
+        )
+        if updated_rows == 0:
+            raise ValueError(f"experiment does not exist: {experiment_id}")
+
     def log_metric(
         self,
         experiment_id: int,
