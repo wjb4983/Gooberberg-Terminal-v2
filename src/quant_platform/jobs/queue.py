@@ -8,11 +8,12 @@ from typing import Any
 
 from redis import Redis
 from rq import Queue
+from sqlalchemy import select
 
 from quant_platform.common.enums import JobStatus
 from quant_platform.common.ids import new_job_id
 from quant_platform.config.settings import Settings, get_settings
-from quant_platform.data.storage.catalog import MetadataCatalog
+from quant_platform.data.storage.catalog import MetadataCatalog, job_logs, jobs
 from quant_platform.jobs import tasks
 
 DEFAULT_QUEUE_NAME = "quant-platform-jobs"
@@ -28,6 +29,67 @@ class QueuedJob:
     queue_name: str
     job_type: str
     status: str
+
+
+def append_job_log(
+    catalog_job_id: int,
+    message: str,
+    *,
+    level: str = "info",
+    metadata: Mapping[str, Any] | None = None,
+    settings: Settings | None = None,
+    catalog: MetadataCatalog | None = None,
+) -> int:
+    """Append a user-visible lifecycle log entry for a catalog job."""
+
+    resolved_catalog = catalog or _catalog(settings)
+    return resolved_catalog.insert_row(
+        "job_logs",
+        {
+            "job_id": catalog_job_id,
+            "level": level,
+            "message": message,
+            "metadata": dict(metadata or {}),
+        },
+    )
+
+
+def list_job_logs(
+    catalog_job_id: int,
+    *,
+    catalog: MetadataCatalog | None = None,
+) -> list[dict[str, Any]]:
+    """Return log entries for a catalog job in display order."""
+
+    resolved_catalog = catalog or _catalog()
+    with resolved_catalog.engine.connect() as connection:
+        rows = connection.execute(
+            select(job_logs)
+            .where(job_logs.c.job_id == catalog_job_id)
+            .order_by(job_logs.c.created_at.asc(), job_logs.c.id.asc())
+        ).mappings()
+        return [dict(row) for row in rows]
+
+
+def list_jobs_by_status(
+    statuses: set[str] | None = None,
+    *,
+    limit: int = 100,
+    catalog: MetadataCatalog | None = None,
+) -> list[dict[str, Any]]:
+    """Return recent jobs, optionally filtered by lifecycle status."""
+
+    resolved_catalog = catalog or _catalog()
+    statement = select(jobs).order_by(jobs.c.created_at.desc()).limit(limit)
+    if statuses:
+        statement = (
+            select(jobs)
+            .where(jobs.c.status.in_(sorted(statuses)))
+            .order_by(jobs.c.created_at.desc())
+            .limit(limit)
+        )
+    with resolved_catalog.engine.connect() as connection:
+        return [dict(row) for row in connection.execute(statement).mappings()]
 
 
 def redis_connection(settings: Settings | None = None) -> Redis:
@@ -74,6 +136,12 @@ def enqueue_job(
             "status": JobStatus.QUEUED.value,
             "payload": normalized_payload,
         },
+    )
+    append_job_log(
+        catalog_job_id,
+        f"Queued {job_type} job.",
+        metadata={"rq_job_id": rq_job_id, "task_path": task_path},
+        settings=settings,
     )
     resolved_queue = queue or job_queue(settings=settings)
     resolved_queue.enqueue(
@@ -145,10 +213,13 @@ def enqueue_backtest_job(
 __all__ = [
     "DEFAULT_QUEUE_NAME",
     "QueuedJob",
+    "append_job_log",
     "enqueue_backtest_job",
     "enqueue_ingestion_job",
     "enqueue_job",
     "enqueue_training_job",
     "job_queue",
+    "list_job_logs",
+    "list_jobs_by_status",
     "redis_connection",
 ]

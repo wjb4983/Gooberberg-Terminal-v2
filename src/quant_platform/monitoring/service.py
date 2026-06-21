@@ -181,7 +181,9 @@ class MonitoringService:
 
     def _latency(self, jobs: list[dict[str, Any]]) -> dict[str, Any]:
         running = sum(1 for job in jobs if job.get("status") in {"queued", "running"})
-        completed = sum(1 for job in jobs if job.get("status") == "completed")
+        completed = sum(
+            1 for job in jobs if job.get("status") in {"completed", "succeeded"}
+        )
         failed = sum(1 for job in jobs if job.get("status") == "failed")
         return {
             "queued_or_running_jobs": running,

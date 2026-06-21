@@ -164,6 +164,17 @@ jobs = Table(
     Column("completed_at", DateTime(timezone=True), nullable=True),
 )
 
+job_logs = Table(
+    "job_logs",
+    metadata,
+    Column("id", Integer, primary_key=True),
+    Column("job_id", ForeignKey("jobs.id"), nullable=False, index=True),
+    Column("level", String(32), nullable=False, default="info"),
+    Column("message", Text, nullable=False),
+    Column("metadata", JSON, nullable=False, default=dict),
+    timestamp_column("created_at"),
+)
+
 TABLES = {
     table.name: table
     for table in (
@@ -176,6 +187,7 @@ TABLES = {
         experiment_metrics,
         backtests,
         jobs,
+        job_logs,
     )
 }
 
