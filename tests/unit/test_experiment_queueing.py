@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import json
 from datetime import date
+from types import SimpleNamespace
 
 import pytest
 
+from quant_platform.data.storage.catalog import MetadataCatalog
 from quant_platform.experiments.queueing import (
     ExperimentKind,
     build_training_experiment_payload,
+    create_and_enqueue_training_experiment,
 )
 from quant_platform.training.schemas import (
     LossName,
@@ -149,3 +152,53 @@ def test_build_training_experiment_payload_rejects_unsupported_model_family() ->
                 "loss_function": LossName.MSE,
             },
         )
+
+
+def test_create_and_enqueue_training_experiment_delegates_to_training_queue(
+    tmp_path,
+) -> None:
+    """Submission helper should create the experiment, then delegate job creation."""
+
+    catalog = MetadataCatalog(tmp_path / "metadata.sqlite")
+    catalog.create_all()
+    payload = {
+        "model_id": 11,
+        "dataset_id": 7,
+        "feature_set_id": 9,
+        "task_type": "regression",
+        "target": {"name": "forward_return"},
+        "split": {"train_start": "2024-01-01", "train_end": "2024-01-31"},
+        "training": {"epochs": 3},
+    }
+    enqueued_payloads = []
+
+    def fake_enqueue(submitted_payload):
+        enqueued_payloads.append(dict(submitted_payload))
+        return SimpleNamespace(
+            catalog_job_id=42,
+            rq_job_id="rq-42",
+            queue_name="test-queue",
+            job_type="training",
+            status="queued",
+        )
+
+    experiment_id, queued = create_and_enqueue_training_experiment(
+        catalog=catalog,
+        name=" nightly training ",
+        payload=payload,
+        enqueue=fake_enqueue,
+    )
+
+    experiments = catalog.list_rows("experiments")
+    jobs = catalog.list_rows("jobs")
+
+    assert queued.catalog_job_id == 42
+    assert queued.job_type == "training"
+    assert queued.status == "queued"
+    assert jobs == []
+    assert payload["experiment_id"] == experiment_id
+    assert enqueued_payloads == [{**payload}]
+    assert experiments[0]["id"] == experiment_id
+    assert experiments[0]["name"] == "nightly training"
+    assert experiments[0]["status"] == "queued"
+    assert enqueued_payloads[0]["experiment_id"] == experiment_id

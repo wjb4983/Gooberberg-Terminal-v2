@@ -8,10 +8,12 @@ from typing import Any
 import pandas as pd
 import streamlit as st
 
-from quant_platform.common.enums import TaskType as JobTaskType
 from quant_platform.config import get_settings
 from quant_platform.data.storage.catalog import MetadataCatalog, experiment_metrics
-from quant_platform.experiments.queueing import build_training_experiment_payload
+from quant_platform.experiments.queueing import (
+    build_training_experiment_payload,
+    create_and_enqueue_training_experiment,
+)
 from quant_platform.training.schemas import LossName, OptimizerName, TaskType
 
 
@@ -191,29 +193,14 @@ with st.form("queue_experiment"):
 
 if submitted:
     catalog = _catalog()
-    experiment_id = catalog.insert_row(
-        "experiments",
-        {
-            "name": name.strip(),
-            "status": "queued",
-            "model_id": payload["model_id"],
-            "dataset_id": payload["dataset_id"],
-            "feature_set_id": payload["feature_set_id"],
-            "parameters": {
-                "task_type": payload["task_type"],
-                "target": payload["target"],
-                "split": payload["split"],
-                "training": payload["training"],
-            },
-            "metadata": {"queued_payload": payload},
-        },
+    experiment_id, queued = create_and_enqueue_training_experiment(
+        catalog=catalog,
+        name=name,
+        payload=payload,
     )
-    payload["experiment_id"] = experiment_id
-    job_id = catalog.insert_row(
-        "jobs",
-        {"job_type": JobTaskType.TRAIN.value, "status": "queued", "payload": payload},
+    st.success(
+        f"Queued training job #{queued.catalog_job_id} for experiment #{experiment_id}."
     )
-    st.success(f"Queued training job #{job_id} for experiment #{experiment_id}.")
 
 st.subheader("Experiment status")
 experiments = _rows("experiments")

@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import date, datetime
 from enum import Enum, StrEnum
 from typing import Any
 
+from quant_platform.data.storage.catalog import MetadataCatalog
+from quant_platform.jobs.queue import QueuedJob, enqueue_training_job
 from quant_platform.models.schemas import ModelType
 
 JsonObject = dict[str, Any]
@@ -106,7 +108,8 @@ def _validate_supported_routing(kind: ExperimentKind, model_family: str | None) 
     if kind != ExperimentKind.SUPERVISED_TRAINING:
         raise ValueError(
             f"unsupported experiment kind for queueing: {kind.value}; "
-            f"only {ExperimentKind.SUPERVISED_TRAINING.value} neural-network experiments can run today"
+            f"only {ExperimentKind.SUPERVISED_TRAINING.value} neural-network "
+            "experiments can run today"
         )
     if model_family != ModelFamily.NEURAL_NETWORK.value:
         raise ValueError(
@@ -189,3 +192,39 @@ def build_training_experiment_payload(
     if experiment_id is not None:
         payload["experiment_id"] = int(experiment_id)
     return payload
+
+
+def create_and_enqueue_training_experiment(
+    *,
+    catalog: MetadataCatalog,
+    name: str,
+    payload: JsonObject,
+    enqueue: Callable[[Mapping[str, Any]], QueuedJob] = enqueue_training_job,
+) -> tuple[int, QueuedJob]:
+    """Create an experiment row, attach its id to the payload, and enqueue training.
+
+    The metadata catalog stores the experiment first so downstream workers receive
+    a payload containing ``experiment_id``. Job persistence and queue status/type
+    conventions are delegated to ``enqueue_training_job``.
+    """
+
+    experiment_id = catalog.insert_row(
+        "experiments",
+        {
+            "name": name.strip(),
+            "status": "queued",
+            "model_id": payload["model_id"],
+            "dataset_id": payload["dataset_id"],
+            "feature_set_id": payload["feature_set_id"],
+            "parameters": {
+                "task_type": payload["task_type"],
+                "target": payload["target"],
+                "split": payload["split"],
+                "training": payload["training"],
+            },
+            "metadata": {"queued_payload": payload},
+        },
+    )
+    payload["experiment_id"] = experiment_id
+    queued = enqueue(payload)
+    return experiment_id, queued
