@@ -7,6 +7,7 @@ import json
 from types import SimpleNamespace
 
 from apps.api.main import app
+from sqlalchemy import select
 
 from quant_platform.data.storage.catalog import MetadataCatalog
 
@@ -103,11 +104,11 @@ def test_api_v1_routes_have_expected_methods() -> None:
     assert "get" in paths["/api/v1/models/feature-sets"]
     assert "get" in paths["/api/v1/models/feature-sets/{feature_set_id}"]
     assert {"get", "post"} <= set(paths["/api/v1/experiments"])
-    assert "get" in paths["/api/v1/experiments/{experiment_id}"]
+    assert {"get", "delete"} <= set(paths["/api/v1/experiments/{experiment_id}"])
     assert "get" in paths["/api/v1/ingestion/manifests"]
     assert "get" in paths["/api/v1/jobs"]
     assert "get" in paths["/api/v1/jobs/board"]
-    assert "get" in paths["/api/v1/jobs/{job_id}"]
+    assert {"get", "delete"} <= set(paths["/api/v1/jobs/{job_id}"])
     assert "get" in paths["/api/v1/jobs/{job_id}/logs"]
     assert "get" in paths["/api/v1/monitoring"]
 
@@ -355,3 +356,255 @@ def test_queue_experiment_rejects_future_kind_before_enqueue(monkeypatch, tmp_pa
 
     assert exc_info.value.status_code == 422
     assert "unsupported experiment kind for queueing" in str(exc_info.value.detail)
+
+
+def test_delete_queued_job_cancels_rq_and_catalog(monkeypatch, tmp_path) -> None:
+    """Queued jobs should be removed from RQ and marked cancelled."""
+
+    from quant_platform.common.enums import JobStatus
+    from quant_platform.data.storage.catalog import job_logs, jobs
+    from quant_platform.jobs import queue as job_queue_module
+
+    catalog = MetadataCatalog(tmp_path / "metadata.sqlite")
+    catalog.create_all()
+    job_id = catalog.insert_row(
+        "jobs",
+        {"job_type": "training", "status": "queued", "payload": {"rq_job_id": "rq-1"}},
+    )
+
+    class FakeRQJob:
+        meta: dict[str, object] = {}
+
+        def __init__(self) -> None:
+            self.cancelled = False
+            self.deleted = False
+
+        def cancel(self):
+            self.cancelled = True
+
+        def delete(self, *, remove_from_queue=True):
+            self.deleted = remove_from_queue
+
+    fake_job = FakeRQJob()
+    monkeypatch.setattr(
+        job_queue_module.Job, "fetch", lambda job_id, connection=None: fake_job
+    )
+
+    result = job_queue_module.cancel_job(
+        job_id, catalog=catalog, queue=SimpleNamespace(connection=object())
+    )
+
+    assert result.status == JobStatus.CANCELLED.value
+    assert result.action == "deleted_from_queue"
+    assert fake_job.cancelled is True
+    assert fake_job.deleted is True
+    with catalog.engine.connect() as connection:
+        row = (
+            connection.execute(select(jobs).where(jobs.c.id == job_id))
+            .mappings()
+            .first()
+        )
+        log = (
+            connection.execute(select(job_logs).where(job_logs.c.job_id == job_id))
+            .mappings()
+            .first()
+        )
+    assert row["status"] == "cancelled"
+    assert row["completed_at"] is not None
+    assert log["metadata"]["action"] == "deleted_from_queue"
+
+
+def test_delete_running_job_requests_stop_and_hides_running(
+    monkeypatch, tmp_path
+) -> None:
+    """Running jobs should request an RQ stop and no longer display as running."""
+
+    from quant_platform.data.storage.catalog import jobs
+    from quant_platform.jobs import queue as job_queue_module
+
+    catalog = MetadataCatalog(tmp_path / "metadata.sqlite")
+    catalog.create_all()
+    job_id = catalog.insert_row(
+        "jobs",
+        {
+            "job_type": "training",
+            "status": "running",
+            "payload": {"rq_job_id": "rq-run"},
+        },
+    )
+    stop_requests: list[str] = []
+
+    class FakeRQJob:
+        def __init__(self) -> None:
+            self.meta: dict[str, object] = {}
+            self.saved = False
+            self.cancelled = False
+
+        def save_meta(self):
+            self.saved = True
+
+        def cancel(self):
+            self.cancelled = True
+
+    fake_job = FakeRQJob()
+    monkeypatch.setattr(
+        job_queue_module.Job, "fetch", lambda job_id, connection=None: fake_job
+    )
+    monkeypatch.setattr(
+        job_queue_module,
+        "send_stop_job_command",
+        lambda connection, rq_job_id: stop_requests.append(rq_job_id),
+    )
+
+    result = job_queue_module.cancel_job(
+        job_id, catalog=catalog, queue=SimpleNamespace(connection=object())
+    )
+
+    assert result.action == "stop_requested"
+    assert stop_requests == ["rq-run"]
+    assert fake_job.meta["cancellation_requested"] is True
+    assert fake_job.saved is True
+    with catalog.engine.connect() as connection:
+        row = (
+            connection.execute(select(jobs).where(jobs.c.id == job_id))
+            .mappings()
+            .first()
+        )
+    assert row["status"] == "cancelled"
+    assert row["payload"]["cancellation_requested"] is True
+
+
+def test_delete_missing_rq_job_logs_warning(monkeypatch, tmp_path) -> None:
+    """Missing Redis/RQ jobs should still cancel catalog rows with a warning."""
+
+    from rq.exceptions import NoSuchJobError
+
+    from quant_platform.data.storage.catalog import job_logs, jobs
+    from quant_platform.jobs import queue as job_queue_module
+
+    catalog = MetadataCatalog(tmp_path / "metadata.sqlite")
+    catalog.create_all()
+    job_id = catalog.insert_row(
+        "jobs",
+        {"job_type": "training", "status": "queued", "payload": {"rq_job_id": "gone"}},
+    )
+    monkeypatch.setattr(
+        job_queue_module.Job,
+        "fetch",
+        lambda job_id, connection=None: (_ for _ in ()).throw(NoSuchJobError("gone")),
+    )
+
+    result = job_queue_module.cancel_job(
+        job_id, catalog=catalog, queue=SimpleNamespace(connection=object())
+    )
+
+    assert result.status == "cancelled"
+    assert result.warnings
+    with catalog.engine.connect() as connection:
+        row = (
+            connection.execute(select(jobs).where(jobs.c.id == job_id))
+            .mappings()
+            .first()
+        )
+        log = (
+            connection.execute(select(job_logs).where(job_logs.c.job_id == job_id))
+            .mappings()
+            .first()
+        )
+    assert row["payload"]["cancellation_warnings"] == result.warnings
+    assert log["level"] == "warning"
+
+
+def test_delete_already_finished_job_only_logs(monkeypatch, tmp_path) -> None:
+    """Finished jobs should not be changed by cancellation requests."""
+
+    from quant_platform.data.storage.catalog import job_logs, jobs
+    from quant_platform.jobs import queue as job_queue_module
+
+    catalog = MetadataCatalog(tmp_path / "metadata.sqlite")
+    catalog.create_all()
+    job_id = catalog.insert_row(
+        "jobs",
+        {
+            "job_type": "training",
+            "status": "succeeded",
+            "payload": {"rq_job_id": "done"},
+        },
+    )
+
+    result = job_queue_module.cancel_job(
+        job_id, catalog=catalog, queue=SimpleNamespace(connection=object())
+    )
+
+    assert result.status == "succeeded"
+    assert result.action == "already_finished"
+    with catalog.engine.connect() as connection:
+        row = (
+            connection.execute(select(jobs).where(jobs.c.id == job_id))
+            .mappings()
+            .first()
+        )
+        log_count = len(
+            connection.execute(
+                select(job_logs).where(job_logs.c.job_id == job_id)
+            ).all()
+        )
+    assert row["status"] == "succeeded"
+    assert row["completed_at"] is None
+    assert log_count == 1
+
+
+def test_delete_experiment_cancels_linked_jobs(monkeypatch, tmp_path) -> None:
+    """Experiment deletion should cancel jobs linked by payload experiment_id."""
+
+    from apps.api.routes import experiments as experiment_routes
+
+    from quant_platform.data.storage.catalog import experiments
+
+    catalog = MetadataCatalog(tmp_path / "metadata.sqlite")
+    catalog.create_all()
+    experiment_id = catalog.insert_row(
+        "experiments",
+        {"name": "cancel me", "status": "running", "parameters": {}, "metadata": {}},
+    )
+    linked_job_id = catalog.insert_row(
+        "jobs",
+        {
+            "job_type": "training",
+            "status": "queued",
+            "payload": {"experiment_id": experiment_id, "rq_job_id": "missing"},
+        },
+    )
+    catalog.insert_row(
+        "jobs",
+        {
+            "job_type": "training",
+            "status": "queued",
+            "payload": {"experiment_id": 999, "rq_job_id": "other"},
+        },
+    )
+    monkeypatch.setattr(experiment_routes, "_catalog", lambda: catalog)
+    monkeypatch.setattr(
+        experiment_routes,
+        "cancel_job",
+        lambda job_id, catalog: SimpleNamespace(
+            catalog_job_id=job_id, status="cancelled", warnings=["missing"]
+        ),
+    )
+
+    response = experiment_routes.delete_experiment(experiment_id)
+
+    assert response.experiment_id == experiment_id
+    assert response.affected_job_ids == [linked_job_id]
+    assert response.status == "cancelled"
+    assert response.warnings == ["missing"]
+    with catalog.engine.connect() as connection:
+        row = (
+            connection.execute(
+                select(experiments).where(experiments.c.id == experiment_id)
+            )
+            .mappings()
+            .first()
+        )
+    assert row["status"] == "cancelled"
+    assert row["completed_at"] is not None

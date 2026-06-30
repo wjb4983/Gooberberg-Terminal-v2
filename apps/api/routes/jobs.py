@@ -12,6 +12,7 @@ from sqlalchemy import select
 from quant_platform.common.enums import JobStatus
 from quant_platform.config import get_settings
 from quant_platform.data.storage.catalog import MetadataCatalog, job_logs, jobs
+from quant_platform.jobs.queue import cancel_job
 
 router = APIRouter(prefix="/api/v1/jobs", tags=["jobs"])
 
@@ -45,6 +46,16 @@ class JobLogResponse(BaseModel):
     message: str
     metadata: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime | None = None
+
+
+class JobCancelResponse(BaseModel):
+    """Response returned after cancelling/deleting a background job."""
+
+    job_id: int
+    status: str
+    rq_job_id: str | None = None
+    action: str
+    warnings: list[str] = Field(default_factory=list)
 
 
 class JobLogsResponse(BaseModel):
@@ -120,6 +131,28 @@ def get_job(job_id: int) -> JobResponse:
     return JobResponse(**dict(row))
 
 
+@router.delete("/{job_id}", response_model=JobCancelResponse)
+def delete_job(job_id: int) -> JobCancelResponse:
+    """Cancel/delete a background job from the catalog and RQ when possible."""
+
+    catalog = _catalog()
+    catalog.create_all()
+    try:
+        result = cancel_job(job_id, catalog=catalog)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+    return JobCancelResponse(
+        job_id=result.catalog_job_id,
+        status=result.status,
+        rq_job_id=result.rq_job_id,
+        action=result.action,
+        warnings=result.warnings,
+    )
+
+
 @router.get("/{job_id}/logs", response_model=JobLogsResponse)
 def get_job_logs(job_id: int) -> JobLogsResponse:
     """Return user-visible logs for a background job."""
@@ -130,11 +163,15 @@ def get_job_logs(job_id: int) -> JobLogsResponse:
         job_exists = connection.execute(
             select(jobs.c.id).where(jobs.c.id == job_id)
         ).first()
-        rows = connection.execute(
-            select(job_logs)
-            .where(job_logs.c.job_id == job_id)
-            .order_by(job_logs.c.created_at.asc(), job_logs.c.id.asc())
-        ).mappings().all()
+        rows = (
+            connection.execute(
+                select(job_logs)
+                .where(job_logs.c.job_id == job_id)
+                .order_by(job_logs.c.created_at.asc(), job_logs.c.id.asc())
+            )
+            .mappings()
+            .all()
+        )
     if job_exists is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
