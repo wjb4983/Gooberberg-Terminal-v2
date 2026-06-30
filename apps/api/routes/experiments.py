@@ -7,7 +7,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from quant_platform.config import get_settings
 from quant_platform.data.storage.catalog import (
@@ -16,13 +16,14 @@ from quant_platform.data.storage.catalog import (
     experiment_metrics,
     experiments,
     feature_sets,
+    jobs,
     model_definitions,
 )
 from quant_platform.experiments.queueing import (
     ExperimentKind,
     build_training_experiment_payload,
 )
-from quant_platform.jobs.queue import enqueue_training_job
+from quant_platform.jobs.queue import cancel_job, enqueue_training_job
 from quant_platform.training.schemas import (
     EarlyStoppingConfig,
     LossName,
@@ -114,6 +115,15 @@ class ExperimentResponse(BaseModel):
     created_at: datetime | None = None
     started_at: datetime | None = None
     completed_at: datetime | None = None
+
+
+class ExperimentCancelResponse(BaseModel):
+    """Response returned after cancelling an experiment and linked jobs."""
+
+    experiment_id: int
+    affected_job_ids: list[int] = Field(default_factory=list)
+    status: str
+    warnings: list[str] = Field(default_factory=list)
 
 
 class ExperimentListResponse(BaseModel):
@@ -245,6 +255,44 @@ def queue_experiment(request: ExperimentQueueRequest) -> QueuedExperimentRespons
         job_id=queued.catalog_job_id,
         status=queued.status,
         payload=payload,
+    )
+
+
+@router.delete("/{experiment_id}", response_model=ExperimentCancelResponse)
+def delete_experiment(experiment_id: int) -> ExperimentCancelResponse:
+    """Cancel an experiment and any catalog jobs linked through job payload metadata."""
+
+    catalog = _catalog()
+    _require_row(catalog, experiments, experiment_id, "experiment")
+    with catalog.engine.connect() as connection:
+        job_rows = [dict(row) for row in connection.execute(select(jobs)).mappings()]
+    linked_jobs = [
+        row
+        for row in job_rows
+        if dict(row.get("payload") or {}).get("experiment_id") == experiment_id
+    ]
+
+    affected_job_ids: list[int] = []
+    warnings: list[str] = []
+    for row in linked_jobs:
+        job_id = int(row["id"])
+        affected_job_ids.append(job_id)
+        result = cancel_job(job_id, catalog=catalog)
+        warnings.extend(result.warnings)
+
+    completed_at = datetime.now().astimezone()
+    with catalog.engine.begin() as connection:
+        connection.execute(
+            update(experiments)
+            .where(experiments.c.id == experiment_id)
+            .values(status="cancelled", completed_at=completed_at)
+        )
+
+    return ExperimentCancelResponse(
+        experiment_id=experiment_id,
+        affected_job_ids=affected_job_ids,
+        status="cancelled",
+        warnings=warnings,
     )
 
 

@@ -4,10 +4,14 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 
 from redis import Redis
 from rq import Queue
+from rq.command import send_stop_job_command
+from rq.exceptions import NoSuchJobError
+from rq.job import Job
 from sqlalchemy import select
 
 from quant_platform.common.enums import JobStatus
@@ -29,6 +33,17 @@ class QueuedJob:
     queue_name: str
     job_type: str
     status: str
+
+
+@dataclass(frozen=True)
+class CancelJobResult:
+    """Outcome from cancelling or deleting a catalog-backed RQ job."""
+
+    catalog_job_id: int
+    status: str
+    rq_job_id: str | None
+    action: str
+    warnings: list[str]
 
 
 def append_job_log(
@@ -115,6 +130,132 @@ def _catalog(settings: Settings | None = None) -> MetadataCatalog:
     catalog = MetadataCatalog(resolved.catalog_db_path)
     catalog.create_all()
     return catalog
+
+
+def _utcnow() -> datetime:
+    return datetime.now(UTC)
+
+
+def _job_row(catalog: MetadataCatalog, catalog_job_id: int) -> dict[str, Any] | None:
+    with catalog.engine.connect() as connection:
+        row = (
+            connection.execute(select(jobs).where(jobs.c.id == catalog_job_id))
+            .mappings()
+            .first()
+        )
+    return dict(row) if row is not None else None
+
+
+def cancel_job(
+    catalog_job_id: int,
+    *,
+    settings: Settings | None = None,
+    queue: Queue | None = None,
+    catalog: MetadataCatalog | None = None,
+) -> CancelJobResult:
+    """Cancel/delete a catalog-backed RQ job and record a user-visible log entry."""
+
+    resolved_catalog = catalog or _catalog(settings)
+    row = _job_row(resolved_catalog, catalog_job_id)
+    if row is None:
+        raise ValueError(f"job not found: {catalog_job_id}")
+
+    current_status = str(row.get("status") or "")
+    payload = dict(row.get("payload") or {})
+    rq_job_id = payload.get("rq_job_id")
+    warnings: list[str] = []
+    action = "already_finished"
+    log_level = "info"
+
+    terminal_statuses = {
+        JobStatus.SUCCEEDED.value,
+        JobStatus.FAILED.value,
+        JobStatus.CANCELLED.value,
+    }
+    if current_status in terminal_statuses:
+        message = f"Cancellation/delete requested, but job is already {current_status}."
+        append_job_log(
+            catalog_job_id,
+            message,
+            metadata={"rq_job_id": rq_job_id, "action": action},
+            catalog=resolved_catalog,
+        )
+        return CancelJobResult(
+            catalog_job_id, current_status, rq_job_id, action, warnings
+        )
+
+    if not rq_job_id:
+        warning = (
+            "Catalog job payload has no rq_job_id; no Redis/RQ job could be removed."
+        )
+        warnings.append(warning)
+        action = "catalog_cancelled_missing_rq_id"
+        log_level = "warning"
+    else:
+        resolved_queue = queue or job_queue(settings=settings)
+        connection = getattr(resolved_queue, "connection", None)
+        try:
+            rq_job = Job.fetch(str(rq_job_id), connection=connection)
+        except NoSuchJobError:
+            warning = f"No matching RQ job found in Redis for rq_job_id={rq_job_id}."
+            warnings.append(warning)
+            action = "catalog_cancelled_missing_rq_job"
+            log_level = "warning"
+        except Exception as exc:  # Redis/RQ lookup failures should be visible to users.
+            warning = f"Failed to look up RQ job {rq_job_id}: {exc}"
+            warnings.append(warning)
+            action = "catalog_cancelled_rq_lookup_failed"
+            log_level = "warning"
+        else:
+            try:
+                if current_status == JobStatus.RUNNING.value:
+                    rq_job.meta["cancellation_requested"] = True
+                    rq_job.save_meta()
+                    send_stop_job_command(connection, str(rq_job_id))
+                    rq_job.cancel()
+                    action = "stop_requested"
+                else:
+                    rq_job.cancel()
+                    rq_job.delete(remove_from_queue=True)
+                    action = "deleted_from_queue"
+            except Exception as exc:
+                warning = f"Failed to cancel/delete RQ job {rq_job_id}: {exc}"
+                warnings.append(warning)
+                action = "catalog_cancelled_rq_delete_failed"
+                log_level = "warning"
+
+    completed_at = _utcnow()
+    new_payload = {**payload, "cancellation_requested": True}
+    if warnings:
+        new_payload["cancellation_warnings"] = warnings
+    resolved_catalog.update_row(
+        "jobs",
+        catalog_job_id,
+        {
+            "status": JobStatus.CANCELLED.value,
+            "payload": new_payload,
+            "completed_at": completed_at,
+        },
+    )
+    append_job_log(
+        catalog_job_id,
+        "Cancellation/delete requested for job.",
+        level=log_level,
+        metadata={
+            "rq_job_id": rq_job_id,
+            "action": action,
+            "previous_status": current_status,
+            "warnings": warnings,
+        },
+        catalog=resolved_catalog,
+    )
+    return CancelJobResult(
+        catalog_job_id=catalog_job_id,
+        status=JobStatus.CANCELLED.value,
+        rq_job_id=rq_job_id,
+        action=action,
+        warnings=warnings,
+    )
 
 
 def enqueue_job(
@@ -213,7 +354,9 @@ def enqueue_backtest_job(
 __all__ = [
     "DEFAULT_QUEUE_NAME",
     "QueuedJob",
+    "CancelJobResult",
     "append_job_log",
+    "cancel_job",
     "enqueue_backtest_job",
     "enqueue_ingestion_job",
     "enqueue_job",
