@@ -6,7 +6,7 @@ from functools import lru_cache
 from importlib.util import find_spec
 from os import getenv
 from pathlib import Path
-from typing import Any, get_type_hints
+from typing import Any, get_origin, get_type_hints
 
 from quant_platform.common.enums import Provider
 from quant_platform.common.paths import expand_path
@@ -25,6 +25,7 @@ else:
 
         return decorator
 
+
 if find_spec("pydantic_settings") is not None:
     from pydantic_settings import BaseSettings, SettingsConfigDict
 elif find_spec("pydantic") is not None:
@@ -41,26 +42,43 @@ else:
             for field_name in annotations:
                 default = getattr(self.__class__, field_name, None)
                 env_name = f"QUANT_PLATFORM_{field_name}".upper()
-                if field_name == "massive_api_key":
-                    value = data.get(
-                        field_name,
-                        getenv("MASSIVE_API_KEY", getenv(env_name, default)),
-                    )
-                else:
-                    value = data.get(field_name, getenv(env_name, default))
-                if field_name in {"data_lake_root", "catalog_db_path"}:
+                legacy_env_names = {"massive_api_key": "MASSIVE_API_KEY"}
+                legacy_env_name = legacy_env_names.get(field_name)
+                env_value = getenv(env_name, default)
+                if legacy_env_name is not None:
+                    env_value = getenv(legacy_env_name, env_value)
+                value = data.get(field_name, env_value)
+                if field_name in {
+                    "data_lake_root",
+                    "catalog_db_path",
+                    "schwab_token_path",
+                }:
                     value = expand_path(value)
                 elif field_name == "default_provider" and not isinstance(
                     value, Provider
                 ):
                     value = Provider(value)
+                elif get_origin(annotations[field_name]) is list and isinstance(
+                    value, str
+                ):
+                    value = [item.strip() for item in value.split(",") if item.strip()]
                 setattr(self, field_name, value)
+
+        def model_dump(self, **_: Any) -> dict[str, Any]:
+            excluded = getattr(self, "_secret_field_names", set())
+            return {
+                field_name: getattr(self, field_name)
+                for field_name in get_type_hints(self.__class__)
+                if field_name not in excluded
+            }
 
     SettingsConfigDict = dict  # type: ignore[assignment]
 
 
 class Settings(BaseSettings):
     """Application settings loaded from environment variables and ``.env`` files."""
+
+    _secret_field_names = {"massive_api_key", "schwab_client_secret"}
 
     if find_spec("pydantic") is not None:
         model_config = SettingsConfigDict(
@@ -87,6 +105,50 @@ class Settings(BaseSettings):
         default=None,
         validation_alias="MASSIVE_API_KEY",
         description="Massive API key.",
+        exclude=True,
+        repr=False,
+    )
+    schwab_client_id: str | None = Field(
+        default=None,
+        description="Schwab application client ID.",
+    )
+    schwab_client_secret: str | None = Field(
+        default=None,
+        description="Schwab application client secret.",
+        exclude=True,
+        repr=False,
+    )
+    schwab_redirect_uri: AnyUrl | str = Field(
+        default="https://127.0.0.1:8182/callback",
+        description="OAuth redirect URI registered for the Schwab application.",
+    )
+    schwab_token_path: Path = Field(
+        default=Path("./data/secrets/schwab_tokens.json"),
+        description="Local path used to persist Schwab OAuth tokens.",
+    )
+    schwab_api_timeout_seconds: float = Field(
+        default=30.0,
+        gt=0,
+        description="Timeout in seconds for Schwab API requests.",
+    )
+    schwab_default_benchmark: str = Field(
+        default="SPY",
+        description="Default benchmark symbol for Schwab account analytics.",
+    )
+    schwab_supported_lookback_windows: list[str] = Field(
+        default_factory=lambda: [
+            "1d",
+            "5d",
+            "1m",
+            "3m",
+            "6m",
+            "1y",
+            "2y",
+            "5y",
+            "10y",
+            "ytd",
+        ],
+        description="Supported Schwab historical lookback windows.",
     )
     default_provider: Provider = Field(
         default=Provider.MASSIVE,
@@ -97,7 +159,9 @@ class Settings(BaseSettings):
         description="Base URL for the platform API.",
     )
 
-    @field_validator("data_lake_root", "catalog_db_path", mode="before")
+    @field_validator(
+        "data_lake_root", "catalog_db_path", "schwab_token_path", mode="before"
+    )
     @classmethod
     def _expand_paths(cls, value: str | Path) -> Path:
         return expand_path(value)

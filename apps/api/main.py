@@ -49,4 +49,11 @@ def settings_summary() -> dict[str, str]:
         "data_lake_root": str(settings.data_lake_root),
         "catalog_db_path": str(settings.catalog_db_path),
         "default_provider": str(settings.default_provider),
+        "schwab_redirect_uri": str(settings.schwab_redirect_uri),
+        "schwab_token_path": str(settings.schwab_token_path),
+        "schwab_api_timeout_seconds": str(settings.schwab_api_timeout_seconds),
+        "schwab_default_benchmark": settings.schwab_default_benchmark,
+        "schwab_supported_lookback_windows": ",".join(
+            settings.schwab_supported_lookback_windows
+        ),
     }

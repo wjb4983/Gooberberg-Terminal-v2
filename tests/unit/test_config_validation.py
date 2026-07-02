@@ -45,3 +45,67 @@ def test_provider_credentials_allow_fake_provider_without_api_key() -> None:
     assert credentials.provider is Provider.INTERNAL
     assert credentials.api_key is None
     assert credentials.base_url is None
+
+
+def test_schwab_settings_defaults_are_non_secret_and_serializable() -> None:
+    settings = Settings(
+        massive_api_key="massive-secret", schwab_client_secret="schwab-secret"
+    )
+
+    assert settings.schwab_client_id is None
+    assert settings.schwab_client_secret == "schwab-secret"
+    assert str(settings.schwab_redirect_uri) == "https://127.0.0.1:8182/callback"
+    assert (
+        settings.schwab_token_path
+        == Path("./data/secrets/schwab_tokens.json").resolve()
+    )
+    assert settings.schwab_api_timeout_seconds == 30.0
+    assert settings.schwab_default_benchmark == "SPY"
+    assert settings.schwab_supported_lookback_windows == [
+        "1d",
+        "5d",
+        "1m",
+        "3m",
+        "6m",
+        "1y",
+        "2y",
+        "5y",
+        "10y",
+        "ytd",
+    ]
+
+    dumped = settings.model_dump()
+    assert "massive_api_key" not in dumped
+    assert "schwab_client_secret" not in dumped
+    assert "massive-secret" not in repr(settings)
+    assert "schwab-secret" not in repr(settings)
+
+
+def test_schwab_settings_can_be_overridden_from_environment(
+    monkeypatch, tmp_path: Path
+) -> None:
+    token_path = tmp_path / "schwab" / "tokens.json"
+    monkeypatch.setenv("QUANT_PLATFORM_SCHWAB_CLIENT_ID", "placeholder-client-id")
+    monkeypatch.setenv(
+        "QUANT_PLATFORM_SCHWAB_CLIENT_SECRET", "placeholder-client-secret"
+    )
+    monkeypatch.setenv(
+        "QUANT_PLATFORM_SCHWAB_REDIRECT_URI", "https://localhost:9443/callback"
+    )
+    monkeypatch.setenv("QUANT_PLATFORM_SCHWAB_TOKEN_PATH", str(token_path))
+    monkeypatch.setenv("QUANT_PLATFORM_SCHWAB_API_TIMEOUT_SECONDS", "12.5")
+    monkeypatch.setenv("QUANT_PLATFORM_SCHWAB_DEFAULT_BENCHMARK", "QQQ")
+    monkeypatch.setenv(
+        "QUANT_PLATFORM_SCHWAB_SUPPORTED_LOOKBACK_WINDOWS",
+        '["1d", "30d", "1y"]',
+    )
+
+    settings = Settings()
+
+    assert settings.schwab_client_id == "placeholder-client-id"
+    assert settings.schwab_client_secret == "placeholder-client-secret"
+    assert str(settings.schwab_redirect_uri) == "https://localhost:9443/callback"
+    assert settings.schwab_token_path == token_path.resolve()
+    assert settings.schwab_api_timeout_seconds == 12.5
+    assert settings.schwab_default_benchmark == "QQQ"
+    assert settings.schwab_supported_lookback_windows == ["1d", "30d", "1y"]
