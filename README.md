@@ -129,3 +129,4 @@ Make sure `.env` is not staged.
 - [Data lake](docs/data_lake.md)
 - [HPC setup](docs/hpc_setup.md)
 - [Massive provider](docs/massive_provider.md)
+- [Schwab portfolio quick-start tasks](docs/schwab_portfolio_quick_start.md)
