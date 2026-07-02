@@ -22,7 +22,9 @@ Use VSCode Remote - SSH to connect to the Ubuntu server over its Tailscale hostn
 
 ## First-time start after cloning
 
-Run these commands in this order:
+Run these tasks in this order. The Ubuntu commands assume the existing server path; on Windows, run PowerShell from the folder where you cloned the repository.
+
+### Ubuntu server
 
 ```bash
 cd /workspace/Gooberberg-Terminal-v2
@@ -33,6 +35,20 @@ uv sync --dev
 uv run pytest tests --timeout=60
 uv run gooberberg-dev
 ```
+
+### Windows laptop
+
+```powershell
+cd C:\path\to\Gooberberg-Terminal-v2
+Copy-Item .env.example .env
+# Edit .env and set MASSIVE_API_KEY if you want live Massive.com data.
+# Leave MASSIVE_API_KEY blank if you only want fake/mock local data.
+uv sync --dev
+uv run pytest tests --timeout=60
+uv run gooberberg-dev
+```
+
+Install Python 3.11+, uv, and Docker Desktop before running the Windows commands. Start Docker Desktop first so `uv run gooberberg-dev` can launch Redis with Docker Compose. If you already have Redis running locally, use `uv run gooberberg-dev --skip-redis`.
 
 The single run command initializes the metadata database, starts Redis with Docker Compose, and runs the FastAPI API, Streamlit UI, and RQ worker together. Use `Ctrl+C` once to stop the app processes.
 
@@ -45,12 +61,14 @@ If you are using VSCode SSH from your laptop, forward ports `8000` and `8501` wh
 
 ## Normal daily start
 
-If the repo is already set up and you just want to run it:
+If the repo is already set up and you just want to run it, start Docker Desktop or your local Redis service first, then run:
 
 ```bash
 cd /workspace/Gooberberg-Terminal-v2
 uv run gooberberg-dev
 ```
+
+On Windows PowerShell, use your local clone path instead of `/workspace/Gooberberg-Terminal-v2`.
 
 ## After pulling new changes
 
@@ -67,6 +85,8 @@ uv run gooberberg-dev
 If the stack was already running, stop it with `Ctrl+C` and rerun the command above.
 
 ## Useful commands
+
+These commands work in Bash and PowerShell unless noted.
 
 ```bash
 # Run the full test suite with a timeout
@@ -89,6 +109,9 @@ uv run gooberberg-dev
 
 # Run the stack without starting Docker-managed Redis
 uv run gooberberg-dev --skip-redis
+
+# Run only the RQ worker on Windows PowerShell
+.\scripts\worker_dev.ps1
 
 # Stop Redis and other compose services
 docker compose down
