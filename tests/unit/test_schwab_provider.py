@@ -87,6 +87,7 @@ def test_account_holdings_missing_fields_are_none(tmp_path: Path) -> None:
     settings = make_settings(tmp_path)
 
     def transport(_request, timeout: float):  # type: ignore[no-untyped-def]
+        assert timeout == 4.25
         return MockResponse(
             {
                 "securitiesAccount": {
@@ -117,6 +118,7 @@ def test_token_refresh_retries_after_unauthorized(tmp_path: Path) -> None:
     calls: list[str] = []
 
     def transport(request, timeout: float):  # type: ignore[no-untyped-def]
+        assert timeout == 4.25
         calls.append(request.full_url)
         if len(calls) == 1:
             raise HTTPError(request.full_url, 401, "unauthorized", hdrs=None, fp=None)
@@ -173,6 +175,7 @@ def test_account_number_lookup_and_masking(tmp_path: Path) -> None:
     settings = make_settings(tmp_path)
 
     def transport(_request, timeout: float):  # type: ignore[no-untyped-def]
+        assert timeout == 4.25
         return MockResponse(
             [
                 {"accountNumber": "123456789", "hashValue": "hash-1"},
