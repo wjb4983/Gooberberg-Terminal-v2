@@ -120,3 +120,37 @@ curl http://localhost:8000/api/v1/experiments/{experiment_id}
 ```
 
 Returns the experiment row, parameters, metadata, metrics, artifact links, and timestamps. Replace `{experiment_id}` with the `experiment_id` returned by the queue request.
+
+## Reconcile stale queued/running jobs
+
+Use reconciliation when the metadata catalog shows jobs stuck in `queued` or `running` but Redis/RQ was restarted, flushed, or otherwise no longer has matching job state. The cleanup checks every queued/running catalog job against the RQ queue plus the queued, started, deferred, scheduled, failed, and finished registries.
+
+Recommended cleanup workflow:
+
+1. Inspect the job board and identify stuck work:
+
+   ```bash
+   curl http://localhost:8000/api/v1/jobs/board
+   ```
+
+2. Reconcile the catalog against RQ state from the API:
+
+   ```bash
+   curl -X POST http://localhost:8000/api/v1/jobs/reconcile
+   ```
+
+   Or run the same maintenance task from the command line:
+
+   ```bash
+   python -m quant_platform.jobs.reconcile
+   ```
+
+3. Review the returned `checked` count and `reconciled` list, then inspect logs for any changed jobs:
+
+   ```bash
+   curl http://localhost:8000/api/v1/jobs/{job_id}/logs
+   ```
+
+4. Re-submit any experiment that should run again after reconciliation.
+
+Reconciliation marks jobs with no `payload.rq_job_id` as `failed` with the error `missing rq_job_id; job was never enqueued`. Jobs with an `rq_job_id` that is absent from all inspected RQ states are marked `cancelled` by default and receive a warning log entry. If a reconciled job payload has `experiment_id`, the linked experiment is moved from `queued` or `running` to the same terminal status.
