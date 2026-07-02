@@ -41,6 +41,32 @@ Run these quick-start tasks from the repository root in this order:
 
    If you are connected through VSCode Remote - SSH, forward ports `8000` and `8501` from the VSCode **Ports** panel before opening them in your laptop browser.
 
+6. Queue a small experiment from FastAPI docs, Streamlit, or the API. Keep the first run intentionally small, for example two epochs and a short date range, so you can verify the queue quickly before submitting larger training work.
+
+7. Check the local job board:
+
+   ```bash
+   curl http://localhost:8000/api/v1/jobs/board
+   ```
+
+   Confirm the new job appears in the queued, running, or finished groups.
+
+8. Check job logs for the queued experiment:
+
+   ```bash
+   curl http://localhost:8000/api/v1/jobs/{job_id}/logs
+   ```
+
+   Replace `{job_id}` with the metadata `job_id` returned when you queued the experiment.
+
+9. Cancel/delete stale queued or running jobs if needed:
+
+   ```bash
+   curl -X DELETE http://localhost:8000/api/v1/jobs/{job_id}
+   ```
+
+   Use this only for work you no longer want to run. The endpoint cancels or deletes the Redis/RQ job when possible and marks the catalog job `cancelled` so stale work no longer appears as active.
+
 ## How experiment jobs are queued
 
 `POST /api/v1/experiments` creates metadata rows before work is processed by the background worker:
@@ -154,3 +180,29 @@ Recommended cleanup workflow:
 4. Re-submit any experiment that should run again after reconciliation.
 
 Reconciliation marks jobs with no `payload.rq_job_id` as `failed` with the error `missing rq_job_id; job was never enqueued`. Jobs with an `rq_job_id` that is absent from all inspected RQ states are marked `cancelled` by default and receive a warning log entry. If a reconciled job payload has `experiment_id`, the linked experiment is moved from `queued` or `running` to the same terminal status.
+
+## Troubleshooting: job remains queued
+
+If a newly submitted experiment stays in `queued` longer than expected, check the queue dependencies in this order:
+
+1. Confirm Redis is running. `uv run gooberberg-dev` starts Redis through Docker Compose for the normal local workflow; if you started services manually, verify the Redis container or process is healthy before re-submitting work.
+2. Confirm the RQ worker process is running. The worker is the process that consumes queued training jobs from Redis and updates catalog rows from `queued` to `running`, then to a terminal status.
+3. Confirm the catalog job payload has an `rq_job_id`. Check the job from `/api/v1/jobs/board` or inspect the catalog row directly. Current RQ-backed submissions store the Redis/RQ identifier in `payload.rq_job_id`; without it, the API can show metadata for the job but cannot match it to a Redis/RQ job.
+
+For stale queued or running jobs that you do not want to keep, call the cancel/delete endpoint:
+
+```bash
+curl -X DELETE http://localhost:8000/api/v1/jobs/{job_id}
+```
+
+If you want the catalog to reconcile all active rows against Redis/RQ state instead, call:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/jobs/reconcile
+```
+
+## Old metadata-only jobs from before RQ integration
+
+Some local catalogs may contain old metadata-only jobs created before Redis/RQ queueing was integrated. Those rows may have `queued` or `running` status but no `payload.rq_job_id`, because no Redis/RQ job was ever created for them.
+
+These legacy rows are observable catalog records only; the worker cannot pick them up from Redis, and the cancel/delete endpoint has no RQ job to remove. When you delete one of these jobs with `DELETE /api/v1/jobs/{job_id}`, the catalog row is still marked `cancelled` and a warning is recorded so it no longer appears as active work. When you run reconciliation, jobs missing `payload.rq_job_id` are marked `failed` with the error `missing rq_job_id; job was never enqueued`.
