@@ -24,7 +24,8 @@ from quant_platform.portfolio.metrics import (
 )
 
 DEFAULT_BENCHMARK_SYMBOL = "SPY"
-PRICE_HISTORY_PERIOD = 10
+PRICE_HISTORY_PERIOD_TYPE = "year"
+PRICE_HISTORY_PERIOD = 20
 HOLDINGS_CACHE_TTL_SECONDS = 60
 PRICE_HISTORY_CACHE_TTL_SECONDS = 24 * 60 * 60
 
@@ -69,7 +70,7 @@ class PortfolioService:
     def __init__(self, provider: SchwabProvider | None = None) -> None:
         self.provider = provider or SchwabProvider()
         self._holdings_cache: dict[str, _CacheEntry] = {}
-        self._price_history_cache: dict[tuple[str, int], _CacheEntry] = {}
+        self._price_history_cache: dict[tuple[str, str, int], _CacheEntry] = {}
 
     def summary(
         self,
@@ -260,12 +261,14 @@ class PortfolioService:
         self, symbol: str
     ) -> tuple[dict[str, Any], str, bool]:
         symbol = symbol.upper()
-        key = (symbol, PRICE_HISTORY_PERIOD)
+        key = (symbol, PRICE_HISTORY_PERIOD_TYPE, PRICE_HISTORY_PERIOD)
         entry = self._price_history_cache.get(key)
         now = datetime.now(UTC)
         if entry and entry.expires_at > now:
             return dict(entry.value), entry.refreshed_at, True
-        payload = self.provider.historical_prices(symbol, period=PRICE_HISTORY_PERIOD)
+        payload = self.provider.historical_prices(
+            symbol, period_type=PRICE_HISTORY_PERIOD_TYPE, period=PRICE_HISTORY_PERIOD
+        )
         refreshed_at = now.isoformat()
         self._price_history_cache[key] = _CacheEntry(
             dict(payload), refreshed_at, _price_history_expires_at(now)

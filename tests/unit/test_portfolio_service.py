@@ -26,6 +26,7 @@ class FakeSchwabProvider:
         self.histories = histories or {}
         self.failures = failures or set()
         self.history_calls: list[str] = []
+        self.history_kwargs: list[dict[str, Any]] = []
 
     def account_numbers(self) -> list[Account]:
         return [Account(account_hash=account_hash) for account_hash in self.holdings]
@@ -38,6 +39,7 @@ class FakeSchwabProvider:
     def historical_prices(self, symbol: str, **_kwargs: Any) -> dict[str, Any]:
         symbol = symbol.upper()
         self.history_calls.append(symbol)
+        self.history_kwargs.append(dict(_kwargs))
         if f"history:{symbol}" in self.failures:
             raise RuntimeError("history unavailable")
         return self.histories.get(symbol, {"candles": []})
@@ -255,3 +257,27 @@ def test_summary_reuses_cached_holdings_and_price_histories() -> None:
         second["metadata"]["prices_refreshed_at"]
         == first["metadata"]["prices_refreshed_at"]
     )
+
+
+def test_summary_requests_long_daily_price_history_for_lookback_metrics() -> None:
+    provider = FakeSchwabProvider(
+        holdings={
+            "hash-1": [
+                {
+                    "symbol": "AAA",
+                    "asset_type": "EQUITY",
+                    "quantity": 1.0,
+                    "market_value": 11.0,
+                }
+            ]
+        },
+        histories={"AAA": candles(10.0, 11.0), "SPY": candles(100.0, 101.0)},
+    )
+
+    PortfolioService(provider).summary()
+
+    assert provider.history_calls == ["AAA", "SPY"]
+    assert provider.history_kwargs == [
+        {"period_type": "year", "period": 20},
+        {"period_type": "year", "period": 20},
+    ]
