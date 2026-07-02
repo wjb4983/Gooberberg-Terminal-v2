@@ -27,6 +27,7 @@ from quant_platform.jobs import tasks
 
 DEFAULT_QUEUE_NAME = "quant-platform-jobs"
 JsonObject = dict[str, Any]
+TRAINING_JOB_TYPES = frozenset({"training", "train"})
 
 
 @dataclass(frozen=True)
@@ -251,6 +252,32 @@ def _update_linked_experiment(
         )
 
 
+def _is_training_job_type(job_type: Any) -> bool:
+    """Return whether a catalog job type should be treated as model training."""
+
+    return str(job_type or "").strip().lower() in TRAINING_JOB_TYPES
+
+
+def _update_training_experiment_for_job(
+    catalog: MetadataCatalog,
+    row: Mapping[str, Any],
+    *,
+    status: str,
+    completed_at: datetime,
+) -> None:
+    """Update linked experiments for current and legacy training job rows."""
+
+    if not _is_training_job_type(row.get("job_type")):
+        return
+    payload = dict(row.get("payload") or {})
+    _update_linked_experiment(
+        catalog,
+        payload.get("experiment_id"),
+        status=status,
+        completed_at=completed_at,
+    )
+
+
 def _mark_reconciled_job(
     catalog: MetadataCatalog,
     row: Mapping[str, Any],
@@ -285,11 +312,8 @@ def _mark_reconciled_job(
             "completed_at": completed_at,
         },
     )
-    _update_linked_experiment(
-        catalog,
-        payload.get("experiment_id"),
-        status=status.value,
-        completed_at=completed_at,
+    _update_training_experiment_for_job(
+        catalog, row, status=status.value, completed_at=completed_at
     )
     append_job_log(
         catalog_job_id,
@@ -450,6 +474,12 @@ def cancel_job(
             "completed_at": completed_at,
         },
     )
+    _update_training_experiment_for_job(
+        resolved_catalog,
+        row,
+        status=JobStatus.CANCELLED.value,
+        completed_at=completed_at,
+    )
     append_job_log(
         catalog_job_id,
         "Cancellation/delete requested for job.",
@@ -570,6 +600,7 @@ __all__ = [
     "ReconciledJob",
     "ReconcileJobsResult",
     "CancelJobResult",
+    "TRAINING_JOB_TYPES",
     "append_job_log",
     "cancel_job",
     "enqueue_backtest_job",
