@@ -10,6 +10,7 @@ from apps.api.routes import (
     jobs,
     models,
     monitoring,
+    portfolio,
 )
 from fastapi import FastAPI
 
@@ -23,6 +24,7 @@ app.include_router(ingestion.router)
 app.include_router(jobs.router)
 app.include_router(models.router)
 app.include_router(monitoring.router)
+app.include_router(portfolio.router)
 
 
 @app.get("/api/v1/health")
