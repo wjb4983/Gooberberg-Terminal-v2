@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from dataclasses import asdict, dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pandas as pd  # type: ignore[import-untyped]
@@ -25,6 +25,15 @@ from quant_platform.portfolio.metrics import (
 
 DEFAULT_BENCHMARK_SYMBOL = "SPY"
 PRICE_HISTORY_PERIOD = 10
+HOLDINGS_CACHE_TTL_SECONDS = 60
+PRICE_HISTORY_CACHE_TTL_SECONDS = 24 * 60 * 60
+
+
+@dataclass(frozen=True)
+class _CacheEntry:
+    value: Any
+    refreshed_at: str
+    expires_at: datetime
 
 
 @dataclass(frozen=True)
@@ -47,6 +56,9 @@ class PortfolioServiceMetadata:
     holdings_refreshed_at: str
     prices_refreshed_at: str
     benchmark_refreshed_at: str | None
+    holdings_cache_ttl_seconds: int
+    price_history_cache_ttl_seconds: int
+    stale_data: bool
     account_hashes: list[str]
     lookbacks: list[str]
 
@@ -56,6 +68,8 @@ class PortfolioService:
 
     def __init__(self, provider: SchwabProvider | None = None) -> None:
         self.provider = provider or SchwabProvider()
+        self._holdings_cache: dict[str, _CacheEntry] = {}
+        self._price_history_cache: dict[tuple[str, int], _CacheEntry] = {}
 
     def summary(
         self,
@@ -68,7 +82,9 @@ class PortfolioService:
         refreshed_at = _utc_now()
         warnings: list[PortfolioWarning] = []
         resolved_hashes = self._resolve_account_hashes(account_hashes, warnings)
-        holdings = self._fetch_holdings(resolved_hashes, warnings)
+        holdings, holdings_refreshed_at = self._fetch_holdings(
+            resolved_hashes, warnings
+        )
         holding_rows = _holding_rows(holdings)
         totals = _account_totals(holding_rows)
         allocation_by_symbol = _allocation_by_symbol(
@@ -78,10 +94,12 @@ class PortfolioService:
             holding_rows, totals["total_value"]
         )
 
-        price_histories = self._fetch_price_histories(holding_rows, warnings)
-        prices_refreshed_at = _utc_now()
-        benchmark_prices = self._fetch_benchmark_history(benchmark_symbol, warnings)
-        benchmark_refreshed_at = _utc_now() if benchmark_prices is not None else None
+        price_histories, prices_refreshed_at = self._fetch_price_histories(
+            holding_rows, warnings
+        )
+        benchmark_prices, benchmark_refreshed_at = self._fetch_benchmark_history(
+            benchmark_symbol, warnings
+        )
         lookback_metrics = _lookback_metrics(
             holding_rows,
             price_histories,
@@ -93,9 +111,12 @@ class PortfolioService:
             provider=self.provider.__class__.__name__,
             benchmark_symbol=benchmark_symbol,
             refreshed_at=refreshed_at,
-            holdings_refreshed_at=refreshed_at,
+            holdings_refreshed_at=holdings_refreshed_at,
             prices_refreshed_at=prices_refreshed_at,
             benchmark_refreshed_at=benchmark_refreshed_at,
+            holdings_cache_ttl_seconds=HOLDINGS_CACHE_TTL_SECONDS,
+            price_history_cache_ttl_seconds=PRICE_HISTORY_CACHE_TTL_SECONDS,
+            stale_data=any(warning.code == "stale_data" for warning in warnings),
             account_hashes=resolved_hashes,
             lookbacks=list(LOOKBACKS),
         )
@@ -127,11 +148,27 @@ class PortfolioService:
 
     def _fetch_holdings(
         self, account_hashes: list[str], warnings: list[PortfolioWarning]
-    ) -> pl.DataFrame:
+    ) -> tuple[pl.DataFrame, str]:
         frames: list[pl.DataFrame] = []
+        refreshed_times: list[str] = []
         for account_hash in account_hashes:
             try:
-                frames.append(self.provider.account_holdings(account_hash))
+                frame, refreshed_at, from_cache = self._cached_account_holdings(
+                    account_hash
+                )
+                frames.append(frame)
+                refreshed_times.append(refreshed_at)
+                if from_cache:
+                    warnings.append(
+                        PortfolioWarning(
+                            code="stale_data",
+                            message=(
+                                "Holdings are served from cache and may be up to "
+                                f"{HOLDINGS_CACHE_TTL_SECONDS} seconds old."
+                            ),
+                            account_hash=account_hash,
+                        )
+                    )
             except Exception as exc:  # noqa: BLE001 - preserve partial accounts
                 warnings.append(
                     PortfolioWarning(
@@ -140,24 +177,32 @@ class PortfolioService:
                         account_hash=account_hash,
                     )
                 )
+        refreshed_at = min(refreshed_times) if refreshed_times else _utc_now()
         if not frames:
-            return pl.DataFrame()
+            return pl.DataFrame(), refreshed_at
         non_empty = [frame for frame in frames if frame.height > 0]
-        return pl.concat(non_empty, how="diagonal") if non_empty else pl.DataFrame()
+        return (
+            pl.concat(non_empty, how="diagonal") if non_empty else pl.DataFrame(),
+            refreshed_at,
+        )
 
     def _fetch_price_histories(
         self, holdings: list[dict[str, Any]], warnings: list[PortfolioWarning]
-    ) -> dict[str, pd.Series]:
+    ) -> tuple[dict[str, pd.Series], str]:
         histories: dict[str, pd.Series] = {}
+        refreshed_times: list[str] = []
         for symbol in _priced_symbols(holdings):
             try:
-                payload = self.provider.historical_prices(
-                    symbol, period=PRICE_HISTORY_PERIOD
+                payload, refreshed_at, from_cache = self._cached_historical_prices(
+                    symbol
                 )
+                refreshed_times.append(refreshed_at)
                 history = _history_to_series(payload)
                 if history.empty:
                     raise ValueError("price history contained no candles")
                 histories[symbol] = history
+                if from_cache:
+                    warnings.append(_cached_price_warning(symbol))
             except Exception as exc:  # noqa: BLE001 - skip symbol, keep response
                 warnings.append(
                     PortfolioWarning(
@@ -166,19 +211,21 @@ class PortfolioService:
                         symbol=symbol,
                     )
                 )
-        return histories
+        return histories, min(refreshed_times) if refreshed_times else _utc_now()
 
     def _fetch_benchmark_history(
         self, benchmark_symbol: str, warnings: list[PortfolioWarning]
-    ) -> pd.Series | None:
+    ) -> tuple[pd.Series | None, str | None]:
         try:
-            payload = self.provider.historical_prices(
-                benchmark_symbol, period=PRICE_HISTORY_PERIOD
+            payload, refreshed_at, from_cache = self._cached_historical_prices(
+                benchmark_symbol
             )
             history = _history_to_series(payload)
             if history.empty:
                 raise ValueError("benchmark history contained no candles")
-            return history
+            if from_cache:
+                warnings.append(_cached_price_warning(benchmark_symbol))
+            return history, refreshed_at
         except Exception as exc:  # noqa: BLE001 - beta can degrade to zero
             warnings.append(
                 PortfolioWarning(
@@ -190,7 +237,40 @@ class PortfolioService:
                     symbol=benchmark_symbol,
                 )
             )
-            return None
+            return None, None
+
+    def _cached_account_holdings(
+        self, account_hash: str
+    ) -> tuple[pl.DataFrame, str, bool]:
+        key = account_hash
+        entry = self._holdings_cache.get(key)
+        now = datetime.now(UTC)
+        if entry and entry.expires_at > now:
+            return entry.value.clone(), entry.refreshed_at, True
+        frame = self.provider.account_holdings(account_hash)
+        refreshed_at = now.isoformat()
+        self._holdings_cache[key] = _CacheEntry(
+            frame.clone(),
+            refreshed_at,
+            now + timedelta(seconds=HOLDINGS_CACHE_TTL_SECONDS),
+        )
+        return frame, refreshed_at, False
+
+    def _cached_historical_prices(
+        self, symbol: str
+    ) -> tuple[dict[str, Any], str, bool]:
+        symbol = symbol.upper()
+        key = (symbol, PRICE_HISTORY_PERIOD)
+        entry = self._price_history_cache.get(key)
+        now = datetime.now(UTC)
+        if entry and entry.expires_at > now:
+            return dict(entry.value), entry.refreshed_at, True
+        payload = self.provider.historical_prices(symbol, period=PRICE_HISTORY_PERIOD)
+        refreshed_at = now.isoformat()
+        self._price_history_cache[key] = _CacheEntry(
+            dict(payload), refreshed_at, _price_history_expires_at(now)
+        )
+        return payload, refreshed_at, False
 
 
 def _holding_rows(holdings: pl.DataFrame) -> list[dict[str, Any]]:
@@ -388,6 +468,24 @@ def _zero_metrics(lookback: Lookback) -> dict[str, Any]:
         "beta": 0.0,
         "max_drawdown": 0.0,
     }
+
+
+def _cached_price_warning(symbol: str) -> PortfolioWarning:
+    return PortfolioWarning(
+        code="stale_data",
+        message=(
+            f"Historical prices for {symbol} are served from cache and may be stale "
+            "until the next daily refresh."
+        ),
+        symbol=symbol,
+    )
+
+
+def _price_history_expires_at(now: datetime) -> datetime:
+    end_of_day = (now + timedelta(days=1)).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+    return max(end_of_day, now + timedelta(seconds=PRICE_HISTORY_CACHE_TTL_SECONDS))
 
 
 def _utc_now() -> str:

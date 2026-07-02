@@ -93,6 +93,9 @@ class PortfolioMetadataResponse(BaseModel):
     holdings_refreshed_at: str
     prices_refreshed_at: str
     benchmark_refreshed_at: str | None = None
+    holdings_cache_ttl_seconds: int | None = None
+    price_history_cache_ttl_seconds: int | None = None
+    stale_data: bool = False
     lookbacks: list[str] = Field(default_factory=list)
 
 
@@ -124,7 +127,9 @@ class PortfolioMetricsEnvelopeResponse(BaseModel):
 
 
 class PortfolioSummaryResponse(
-    PortfolioHoldingsResponse, PortfolioAllocationsResponse, PortfolioMetricsEnvelopeResponse
+    PortfolioHoldingsResponse,
+    PortfolioAllocationsResponse,
+    PortfolioMetricsEnvelopeResponse,
 ):
     """Complete sanitized portfolio summary."""
 
@@ -137,6 +142,9 @@ def _service() -> PortfolioService:
             detail="Schwab configuration is missing.",
         )
     return PortfolioService()
+
+
+_PORTFOLIO_SERVICE_DEPENDENCY = Depends(_service)
 
 
 def _summary(service: PortfolioService, benchmark_symbol: str) -> dict[str, Any]:
@@ -172,7 +180,7 @@ def _sanitize_warning(warning: Any) -> dict[str, Any]:
 @router.get("", response_model=PortfolioSummaryResponse)
 def get_portfolio_summary(
     benchmark_symbol: str = Query(default="SPY"),
-    service: PortfolioService = Depends(_service),
+    service: PortfolioService = _PORTFOLIO_SERVICE_DEPENDENCY,
 ) -> PortfolioSummaryResponse:
     """Return a complete sanitized portfolio summary."""
 
@@ -182,7 +190,7 @@ def get_portfolio_summary(
 @router.get("/holdings", response_model=PortfolioHoldingsResponse)
 def get_portfolio_holdings(
     benchmark_symbol: str = Query(default="SPY"),
-    service: PortfolioService = Depends(_service),
+    service: PortfolioService = _PORTFOLIO_SERVICE_DEPENDENCY,
 ) -> PortfolioHoldingsResponse:
     """Return sanitized portfolio holdings and totals."""
 
@@ -198,7 +206,7 @@ def get_portfolio_holdings(
 @router.get("/allocations", response_model=PortfolioAllocationsResponse)
 def get_portfolio_allocations(
     benchmark_symbol: str = Query(default="SPY"),
-    service: PortfolioService = Depends(_service),
+    service: PortfolioService = _PORTFOLIO_SERVICE_DEPENDENCY,
 ) -> PortfolioAllocationsResponse:
     """Return sanitized allocation buckets."""
 
@@ -214,7 +222,7 @@ def get_portfolio_allocations(
 @router.get("/metrics", response_model=PortfolioMetricsEnvelopeResponse)
 def get_portfolio_metrics(
     benchmark_symbol: str = Query(default="SPY"),
-    service: PortfolioService = Depends(_service),
+    service: PortfolioService = _PORTFOLIO_SERVICE_DEPENDENCY,
 ) -> PortfolioMetricsEnvelopeResponse:
     """Return sanitized lookback metrics."""
 

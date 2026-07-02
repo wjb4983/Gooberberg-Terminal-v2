@@ -37,7 +37,8 @@ def _setup_issues() -> list[str]:
         )
     if not settings.schwab_client_secret:
         issues.append(
-            "Set `QUANT_PLATFORM_SCHWAB_CLIENT_SECRET` to your Schwab app client secret."
+            "Set `QUANT_PLATFORM_SCHWAB_CLIENT_SECRET` to your Schwab app "
+            "client secret."
         )
     token_path = Path(settings.schwab_token_path)
     if not token_path.exists():
@@ -191,7 +192,8 @@ try:
 except Exception as exc:  # noqa: BLE001 - page-level guidance for setup/runtime issues
     st.error(f"Unable to load Schwab accounts: {exc}")
     st.info(
-        "Verify the token file exists, is readable, and contains valid Schwab OAuth tokens."
+        "Verify the token file exists, is readable, and contains valid Schwab "
+        "OAuth tokens."
     )
     st.stop()
 
@@ -236,8 +238,13 @@ except Exception as exc:  # noqa: BLE001 - page-level guidance for setup/runtime
 
 metadata = summary.get("metadata") or {}
 st.caption(
-    f"Refreshed at: {metadata.get('refreshed_at', 'unknown')} | Benchmark: {benchmark}"
+    f"Refreshed at: {metadata.get('refreshed_at', 'unknown')} | "
+    f"Holdings as of: {metadata.get('holdings_refreshed_at', 'unknown')} | "
+    f"Prices as of: {metadata.get('prices_refreshed_at', 'unknown')} | "
+    f"Benchmark: {benchmark}"
 )
+if metadata.get("stale_data"):
+    st.warning("Some portfolio data is served from cache; see warnings for details.")
 for warning in summary.get("warnings") or []:
     st.warning(warning.get("message", "Portfolio warning."))
 

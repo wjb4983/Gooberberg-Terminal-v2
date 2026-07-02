@@ -210,3 +210,48 @@ def test_summary_benchmark_failure_warns_but_keeps_portfolio_metrics() -> None:
     assert [warning["code"] for warning in summary["warnings"]] == [
         "benchmark_history_failed"
     ]
+
+
+def test_summary_reuses_cached_holdings_and_price_histories() -> None:
+    provider = FakeSchwabProvider(
+        holdings={
+            "hash-1": [
+                {
+                    "symbol": "AAA",
+                    "asset_type": "EQUITY",
+                    "quantity": 1.0,
+                    "market_value": 10.0,
+                }
+            ]
+        },
+        histories={"AAA": candles(10.0, 11.0), "SPY": candles(100.0, 101.0)},
+    )
+    provider.holding_calls = []
+    original_account_holdings = provider.account_holdings
+
+    def counted_account_holdings(account_hash: str) -> pl.DataFrame:
+        provider.holding_calls.append(account_hash)
+        return original_account_holdings(account_hash)
+
+    provider.account_holdings = counted_account_holdings  # type: ignore[method-assign]
+    service = PortfolioService(provider)
+
+    first = service.summary()
+    second = service.summary()
+
+    assert provider.holding_calls == ["hash-1"]
+    assert provider.history_calls == ["AAA", "SPY"]
+    assert first["metadata"]["stale_data"] is False
+    assert second["metadata"]["stale_data"] is True
+    assert (
+        [warning["code"] for warning in second["warnings"]].count("stale_data")
+        == 3
+    )
+    assert (
+        second["metadata"]["holdings_refreshed_at"]
+        == first["metadata"]["holdings_refreshed_at"]
+    )
+    assert (
+        second["metadata"]["prices_refreshed_at"]
+        == first["metadata"]["prices_refreshed_at"]
+    )
