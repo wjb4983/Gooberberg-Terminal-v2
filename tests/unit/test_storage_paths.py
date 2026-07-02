@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from quant_platform.common.enums import AssetClass, DataType, Provider
+from quant_platform.common.paths import expand_path
 from quant_platform.data.storage.lake import DataLakePaths, date_partitions
 from quant_platform.data.storage.parquet import ParquetPaths
 
@@ -204,3 +205,12 @@ def test_parquet_rejects_non_parquet_filename(tmp_path: Path) -> None:
             symbol="AAPL",
             filename="part.json",
         )
+
+
+def test_expand_path_expands_environment_variables(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("GOOBERBERG_TEST_DATA", str(tmp_path))
+
+    assert expand_path("$GOOBERBERG_TEST_DATA/lake") == (tmp_path / "lake").resolve()
+    assert expand_path(r"%GOOBERBERG_TEST_DATA%/lake") == (tmp_path / "lake").resolve()

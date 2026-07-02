@@ -2,13 +2,21 @@
 
 from __future__ import annotations
 
+import os
+import re
 from pathlib import Path
 
 
 def expand_path(path: str | Path) -> Path:
     """Return an absolute path with user home and environment variables expanded."""
 
-    return Path(path).expanduser().resolve()
+    expanded = os.path.expandvars(str(path))
+    expanded = re.sub(
+        r"%([^%]+)%",
+        lambda match: os.environ.get(match.group(1), match.group(0)),
+        expanded,
+    )
+    return Path(expanded).expanduser().resolve()
 
 
 def ensure_directory(path: str | Path) -> Path:
