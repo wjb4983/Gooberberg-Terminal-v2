@@ -112,8 +112,9 @@ class SchwabProvider:
         """Return raw Schwab historical price data for ``symbol``."""
 
         payload = self._get_json(
-            f"/marketdata/v1/pricehistory/{symbol.upper()}",
+            "/marketdata/v1/pricehistory",
             params={
+                "symbol": symbol.upper(),
                 "periodType": period_type,
                 "period": period,
                 "frequencyType": frequency_type,

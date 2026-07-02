@@ -162,8 +162,9 @@ def test_http_timeout_configuration_and_marketdata_urls(tmp_path: Path) -> None:
 
     parsed = urlparse(str(captured["url"]))
     assert captured["timeout"] == 9.5
-    assert parsed.path == "/marketdata/v1/pricehistory/MSFT"
+    assert parsed.path == "/marketdata/v1/pricehistory"
     assert parse_qs(parsed.query) == {
+        "symbol": ["MSFT"],
         "periodType": ["day"],
         "period": ["1"],
         "frequencyType": ["daily"],
