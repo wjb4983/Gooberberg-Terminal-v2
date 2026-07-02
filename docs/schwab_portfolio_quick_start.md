@@ -4,9 +4,19 @@ Use these tasks in order to add a Schwab holdings page that displays current pos
 
 ## Task 1: Confirm Schwab app access and redirect configuration
 
-1. Confirm your Schwab Developer app has the account/position and market-data access needed for holdings, quotes, and historical prices.
-2. Choose the local redirect URI you will use for OAuth bootstrap, for example `https://127.0.0.1:8182/callback` or another URI allowed by Schwab.
+1. In the Schwab Developer portal, confirm the app is approved for these non-secret capabilities before implementation work begins:
+   - Account positions or account holdings access for reading current portfolio positions.
+   - Quotes access for current security prices.
+   - Historical market data access for lookback-based performance metrics.
+2. Register this local OAuth redirect URI with the Schwab app: `https://127.0.0.1:8182/callback`. Use the same value later for local configuration unless the portal registration is intentionally changed.
 3. Record only non-secret setup notes in project docs; never commit Schwab client secrets, refresh tokens, access tokens, account numbers, or raw authorization responses.
+
+### Non-secret Schwab setup notes
+
+- Required Schwab Developer app capabilities to verify in the portal: account positions/holdings, quotes, and historical market data.
+- Local OAuth redirect URI selected for this project: `https://127.0.0.1:8182/callback`.
+- Secret-handling rule: keep Schwab client secrets, refresh tokens, access tokens, account numbers, and raw authorization responses out of git, logs, screenshots, issues, and pull request text.
+- If setup details need to be shared, document only capability names, redirect URI choices, masked account labels, and high-level verification status.
 
 ## Task 2: Add Schwab configuration settings
 
