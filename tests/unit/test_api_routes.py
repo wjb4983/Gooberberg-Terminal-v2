@@ -80,6 +80,7 @@ def test_api_v1_routes_are_registered() -> None:
         "/api/v1/ingestion/manifests",
         "/api/v1/jobs",
         "/api/v1/jobs/board",
+        "/api/v1/jobs/reconcile",
         "/api/v1/jobs/{job_id}",
         "/api/v1/jobs/{job_id}/logs",
         "/api/v1/monitoring",
@@ -108,6 +109,7 @@ def test_api_v1_routes_have_expected_methods() -> None:
     assert "get" in paths["/api/v1/ingestion/manifests"]
     assert "get" in paths["/api/v1/jobs"]
     assert "get" in paths["/api/v1/jobs/board"]
+    assert "post" in paths["/api/v1/jobs/reconcile"]
     assert {"get", "delete"} <= set(paths["/api/v1/jobs/{job_id}"])
     assert "get" in paths["/api/v1/jobs/{job_id}/logs"]
     assert "get" in paths["/api/v1/monitoring"]

@@ -12,12 +12,17 @@ from rq import Queue
 from rq.command import send_stop_job_command
 from rq.exceptions import NoSuchJobError
 from rq.job import Job
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from quant_platform.common.enums import JobStatus
 from quant_platform.common.ids import new_job_id
 from quant_platform.config.settings import Settings, get_settings
-from quant_platform.data.storage.catalog import MetadataCatalog, job_logs, jobs
+from quant_platform.data.storage.catalog import (
+    MetadataCatalog,
+    experiments,
+    job_logs,
+    jobs,
+)
 from quant_platform.jobs import tasks
 
 DEFAULT_QUEUE_NAME = "quant-platform-jobs"
@@ -33,6 +38,26 @@ class QueuedJob:
     queue_name: str
     job_type: str
     status: str
+
+
+@dataclass(frozen=True)
+class ReconciledJob:
+    """Outcome from reconciling one catalog job against RQ state."""
+
+    catalog_job_id: int
+    previous_status: str
+    status: str
+    rq_job_id: str | None
+    action: str
+    message: str
+
+
+@dataclass(frozen=True)
+class ReconcileJobsResult:
+    """Summary returned after reconciling catalog jobs against RQ state."""
+
+    checked: int
+    reconciled: list[ReconciledJob]
 
 
 @dataclass(frozen=True)
@@ -145,6 +170,194 @@ def _job_row(catalog: MetadataCatalog, catalog_job_id: int) -> dict[str, Any] | 
         )
     return dict(row) if row is not None else None
 
+
+def _registry_job_ids(registry: Any) -> set[str]:
+    """Return job ids from an RQ registry-like object."""
+
+    if hasattr(registry, "get_job_ids"):
+        return {str(job_id) for job_id in registry.get_job_ids()}
+    if hasattr(registry, "get_jobs"):
+        return {str(getattr(job, "id", job)) for job in registry.get_jobs()}
+    return set()
+
+
+def _rq_job_exists(rq_job_id: str, queue: Queue) -> bool:
+    """Return whether an RQ job id exists in live queue/registry state."""
+
+    if hasattr(queue, "fetch_job") and queue.fetch_job(rq_job_id) is not None:
+        return True
+
+    if hasattr(queue, "get_job_ids") and rq_job_id in {
+        str(job_id) for job_id in queue.get_job_ids()
+    }:
+        return True
+
+    queue_jobs = getattr(queue, "jobs", None)
+    if queue_jobs is not None:
+        if any(str(getattr(job, "id", job)) == rq_job_id for job in queue_jobs):
+            return True
+
+    registry_names = (
+        "queued_job_registry",
+        "started_job_registry",
+        "deferred_job_registry",
+        "scheduled_job_registry",
+        "failed_job_registry",
+        "finished_job_registry",
+    )
+    for name in registry_names:
+        registry = getattr(queue, name, None)
+        if registry is not None and rq_job_id in _registry_job_ids(registry):
+            return True
+
+    registry_factory_names = (
+        "get_started_job_registry",
+        "get_deferred_job_registry",
+        "get_scheduler",
+        "get_failed_job_registry",
+        "get_finished_job_registry",
+    )
+    for name in registry_factory_names:
+        factory = getattr(queue, name, None)
+        if factory is None:
+            continue
+        registry = factory()
+        if rq_job_id in _registry_job_ids(registry):
+            return True
+    return False
+
+
+def _update_linked_experiment(
+    catalog: MetadataCatalog,
+    experiment_id: Any,
+    *,
+    status: str,
+    completed_at: datetime,
+) -> None:
+    """Move a queued/running linked experiment to the reconciled terminal status."""
+
+    if experiment_id is None:
+        return
+    with catalog.engine.begin() as connection:
+        connection.execute(
+            update(experiments)
+            .where(experiments.c.id == int(experiment_id))
+            .where(
+                experiments.c.status.in_(
+                    [JobStatus.QUEUED.value, JobStatus.RUNNING.value]
+                )
+            )
+            .values(status=status, completed_at=completed_at)
+        )
+
+
+def _mark_reconciled_job(
+    catalog: MetadataCatalog,
+    row: Mapping[str, Any],
+    *,
+    status: JobStatus,
+    action: str,
+    message: str,
+) -> ReconciledJob:
+    """Mark one catalog job terminal and append a reconciliation log."""
+
+    completed_at = _utcnow()
+    catalog_job_id = int(row["id"])
+    previous_status = str(row.get("status") or "")
+    payload = dict(row.get("payload") or {})
+    rq_job_id = payload.get("rq_job_id")
+    new_payload = {
+        **payload,
+        "reconciliation": {
+            "action": action,
+            "message": message,
+            "previous_status": previous_status,
+            "completed_at": completed_at.isoformat(),
+        },
+    }
+    catalog.update_row(
+        "jobs",
+        catalog_job_id,
+        {
+            "status": status.value,
+            "payload": new_payload,
+            "error": message if status == JobStatus.FAILED else row.get("error"),
+            "completed_at": completed_at,
+        },
+    )
+    _update_linked_experiment(
+        catalog,
+        payload.get("experiment_id"),
+        status=status.value,
+        completed_at=completed_at,
+    )
+    append_job_log(
+        catalog_job_id,
+        message,
+        level="warning",
+        metadata={
+            "rq_job_id": rq_job_id,
+            "action": action,
+            "previous_status": previous_status,
+            "reconciled_status": status.value,
+        },
+        catalog=catalog,
+    )
+    return ReconciledJob(
+        catalog_job_id=catalog_job_id,
+        previous_status=previous_status,
+        status=status.value,
+        rq_job_id=str(rq_job_id) if rq_job_id else None,
+        action=action,
+        message=message,
+    )
+
+
+def reconcile_stale_jobs(
+    statuses: set[str] | None = None,
+    *,
+    stale_status: JobStatus = JobStatus.CANCELLED,
+    settings: Settings | None = None,
+    queue: Queue | None = None,
+    catalog: MetadataCatalog | None = None,
+) -> ReconcileJobsResult:
+    """Reconcile queued/running catalog jobs that are missing from RQ state."""
+
+    watched_statuses = statuses or {JobStatus.QUEUED.value, JobStatus.RUNNING.value}
+    resolved_catalog = catalog or _catalog(settings)
+    resolved_queue = queue or job_queue(settings=settings)
+    rows = list_jobs_by_status(
+        set(watched_statuses), limit=10_000, catalog=resolved_catalog
+    )
+    reconciled: list[ReconciledJob] = []
+    for row in rows:
+        payload = dict(row.get("payload") or {})
+        rq_job_id = payload.get("rq_job_id")
+        if not rq_job_id:
+            reconciled.append(
+                _mark_reconciled_job(
+                    resolved_catalog,
+                    row,
+                    status=JobStatus.FAILED,
+                    action="missing_rq_job_id",
+                    message="missing rq_job_id; job was never enqueued",
+                )
+            )
+            continue
+        if not _rq_job_exists(str(rq_job_id), resolved_queue):
+            reconciled.append(
+                _mark_reconciled_job(
+                    resolved_catalog,
+                    row,
+                    status=stale_status,
+                    action="stale_rq_job_missing",
+                    message=(
+                        "RQ job not found in queued, started, deferred, scheduled, "
+                        "failed, or finished registries; catalog job marked stale"
+                    ),
+                )
+            )
+    return ReconcileJobsResult(checked=len(rows), reconciled=reconciled)
 
 def cancel_job(
     catalog_job_id: int,
@@ -354,6 +567,8 @@ def enqueue_backtest_job(
 __all__ = [
     "DEFAULT_QUEUE_NAME",
     "QueuedJob",
+    "ReconciledJob",
+    "ReconcileJobsResult",
     "CancelJobResult",
     "append_job_log",
     "cancel_job",
@@ -364,5 +579,6 @@ __all__ = [
     "job_queue",
     "list_job_logs",
     "list_jobs_by_status",
+    "reconcile_stale_jobs",
     "redis_connection",
 ]

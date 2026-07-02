@@ -12,7 +12,7 @@ from sqlalchemy import select
 from quant_platform.common.enums import JobStatus
 from quant_platform.config import get_settings
 from quant_platform.data.storage.catalog import MetadataCatalog, job_logs, jobs
-from quant_platform.jobs.queue import cancel_job
+from quant_platform.jobs.queue import cancel_job, reconcile_stale_jobs
 
 router = APIRouter(prefix="/api/v1/jobs", tags=["jobs"])
 
@@ -46,6 +46,24 @@ class JobLogResponse(BaseModel):
     message: str
     metadata: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime | None = None
+
+
+class JobReconciledJobResponse(BaseModel):
+    """One job changed by queue reconciliation."""
+
+    job_id: int
+    previous_status: str
+    status: str
+    rq_job_id: str | None = None
+    action: str
+    message: str
+
+
+class JobReconcileResponse(BaseModel):
+    """Response returned after reconciling stale jobs."""
+
+    checked: int
+    reconciled: list[JobReconciledJobResponse]
 
 
 class JobCancelResponse(BaseModel):
@@ -108,6 +126,29 @@ def job_board() -> JobBoardResponse:
         queued=[JobResponse(**row) for row in queued],
         running=[JobResponse(**row) for row in running],
         finished=[JobResponse(**row) for row in finished],
+    )
+
+
+@router.post("/reconcile", response_model=JobReconcileResponse)
+def reconcile_jobs() -> JobReconcileResponse:
+    """Reconcile queued/running catalog jobs against RQ state."""
+
+    catalog = _catalog()
+    catalog.create_all()
+    result = reconcile_stale_jobs(catalog=catalog)
+    return JobReconcileResponse(
+        checked=result.checked,
+        reconciled=[
+            JobReconciledJobResponse(
+                job_id=item.catalog_job_id,
+                previous_status=item.previous_status,
+                status=item.status,
+                rq_job_id=item.rq_job_id,
+                action=item.action,
+                message=item.message,
+            )
+            for item in result.reconciled
+        ],
     )
 
 
