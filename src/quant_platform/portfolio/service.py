@@ -373,8 +373,9 @@ def _lookback_metrics(
     metrics: dict[str, dict[str, Any]] = {}
     for lookback in LOOKBACKS:
         try:
+            lookback_prices = _complete_price_window(prices, positions, lookback)
             result = compute_portfolio_metrics(
-                prices,
+                lookback_prices,
                 positions,
                 cash=cash,
                 benchmark_prices=benchmark,
@@ -390,6 +391,44 @@ def _lookback_metrics(
             )
             metrics[lookback] = _zero_metrics(lookback)
     return metrics
+
+
+def _complete_price_window(
+    prices: pd.DataFrame, positions: dict[str, float], lookback: Lookback
+) -> pd.DataFrame:
+    """Return the deepest computable price window for a lookback.
+
+    Some held securities have less history than older positions. Metrics should
+    still render for each lookback using the maximum common history available in
+    that window instead of failing the whole lookback on leading missing prices.
+    """
+
+    if prices.empty or not positions:
+        return prices
+    sliced = (
+        prices
+        if lookback == "MAX"
+        else prices.loc[prices.index >= _lookback_start(prices, lookback)]
+    )
+    held = [symbol for symbol, quantity in positions.items() if quantity != 0.0]
+    if not held:
+        return sliced
+    return sliced.dropna(subset=held)
+
+
+def _lookback_start(prices: pd.DataFrame, lookback: Lookback) -> pd.Timestamp:
+    end = prices.index.max()
+    if lookback == "YTD":
+        return pd.Timestamp(year=end.year, month=1, day=1)
+    offsets = {
+        "1M": pd.DateOffset(months=1),
+        "3M": pd.DateOffset(months=3),
+        "6M": pd.DateOffset(months=6),
+        "1Y": pd.DateOffset(years=1),
+        "3Y": pd.DateOffset(years=3),
+        "MAX": pd.DateOffset(years=100),
+    }
+    return end - offsets[lookback]
 
 
 def _prices_frame(

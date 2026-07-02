@@ -46,9 +46,13 @@ class FakeSchwabProvider:
 
 
 def candles(*closes: float) -> dict[str, Any]:
+    return dated_candles(1_704_067_200_000, *closes)
+
+
+def dated_candles(start_ms: int, *closes: float) -> dict[str, Any]:
     return {
         "candles": [
-            {"datetime": 1_704_067_200_000 + index * 86_400_000, "close": close}
+            {"datetime": start_ms + index * 86_400_000, "close": close}
             for index, close in enumerate(closes)
         ]
     }
@@ -137,6 +141,44 @@ def test_summary_warns_and_continues_when_price_history_is_missing() -> None:
         "metrics_symbol_skipped",
     ]
     assert summary["warnings"][0]["symbol"] == "BBB"
+
+
+def test_summary_uses_deepest_complete_history_for_staggered_symbols() -> None:
+    provider = FakeSchwabProvider(
+        holdings={
+            "hash-1": [
+                {
+                    "symbol": "AAA",
+                    "asset_type": "EQUITY",
+                    "quantity": 1.0,
+                    "market_value": 14.0,
+                },
+                {
+                    "symbol": "BBB",
+                    "asset_type": "EQUITY",
+                    "quantity": 1.0,
+                    "market_value": 22.0,
+                },
+            ]
+        },
+        histories={
+            "AAA": dated_candles(1_704_067_200_000, 10.0, 11.0, 12.0, 13.0, 14.0),
+            "BBB": dated_candles(1_704_326_400_000, 20.0, 22.0),
+            "SPY": dated_candles(1_704_067_200_000, 100.0, 101.0, 102.0, 103.0, 104.0),
+        },
+    )
+
+    summary = PortfolioService(provider).summary()
+
+    assert "lookback_metrics_failed" not in {
+        warning["code"] for warning in summary["warnings"]
+    }
+    assert summary["lookback_metrics"]["MAX"]["total_return"] == pytest.approx(
+        36.0 / 33.0 - 1.0
+    )
+    assert summary["lookback_metrics"]["3Y"]["weights"] == pytest.approx(
+        {"AAA": 14.0 / 36.0, "BBB": 22.0 / 36.0}
+    )
 
 
 def test_summary_empty_holdings_returns_zero_response() -> None:
@@ -245,10 +287,7 @@ def test_summary_reuses_cached_holdings_and_price_histories() -> None:
     assert provider.history_calls == ["AAA", "SPY"]
     assert first["metadata"]["stale_data"] is False
     assert second["metadata"]["stale_data"] is True
-    assert (
-        [warning["code"] for warning in second["warnings"]].count("stale_data")
-        == 3
-    )
+    assert [warning["code"] for warning in second["warnings"]].count("stale_data") == 3
     assert (
         second["metadata"]["holdings_refreshed_at"]
         == first["metadata"]["holdings_refreshed_at"]

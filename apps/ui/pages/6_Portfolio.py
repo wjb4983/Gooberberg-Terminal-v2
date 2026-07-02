@@ -10,10 +10,11 @@ import streamlit as st
 
 from quant_platform.config import get_settings
 from quant_platform.data.providers.schwab import SchwabProvider, mask_account_label
+from quant_platform.portfolio.metrics import LOOKBACKS
 from quant_platform.portfolio.service import PortfolioService
 
 BENCHMARK_OPTIONS = ["SPY", "QQQ", "IWM", "DIA"]
-DEFAULT_LOOKBACK = "1y"
+DEFAULT_LOOKBACK = "1Y"
 
 
 def _currency(value: Any) -> str:
@@ -163,12 +164,13 @@ def _render_holdings(rows: list[dict[str, Any]]) -> None:
 def _render_lookback_metrics(summary: dict[str, Any], selected_lookback: str) -> None:
     st.subheader("Lookback metrics")
     metrics = summary.get("lookback_metrics") or {}
-    selected = metrics.get(selected_lookback)
+    normalized_lookback = selected_lookback.upper()
+    selected = metrics.get(normalized_lookback)
     if not selected:
-        st.info(f"No metrics are available for the {selected_lookback} lookback.")
+        st.info(f"No metrics are available for the {normalized_lookback} lookback.")
         return
     row = {
-        "lookback": selected.get("lookback", selected_lookback),
+        "lookback": selected.get("lookback", normalized_lookback),
         "total_return": _percent(selected.get("total_return")),
         "annualized_volatility": _percent(selected.get("annualized_volatility")),
         "sharpe_ratio": selected.get("sharpe_ratio"),
@@ -211,7 +213,12 @@ benchmark = st.selectbox(
     else 0,
     key="portfolio_benchmark_symbol",
 )
-lookbacks = get_settings().schwab_supported_lookback_windows
+configured_lookbacks = [
+    lookback.upper() for lookback in get_settings().schwab_supported_lookback_windows
+]
+lookbacks = [lookback for lookback in LOOKBACKS if lookback in configured_lookbacks]
+if not lookbacks:
+    lookbacks = list(LOOKBACKS)
 lookback = st.selectbox(
     "Lookback",
     lookbacks,
