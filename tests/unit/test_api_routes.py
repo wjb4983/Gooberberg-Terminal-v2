@@ -517,6 +517,50 @@ def test_delete_missing_rq_job_logs_warning(monkeypatch, tmp_path) -> None:
     assert log["level"] == "warning"
 
 
+def test_cancel_job_treats_legacy_train_as_training(monkeypatch, tmp_path) -> None:
+    """Legacy train job rows should cancel linked training experiments."""
+
+    from rq.exceptions import NoSuchJobError
+
+    from quant_platform.data.storage.catalog import experiments
+    from quant_platform.jobs import queue as job_queue_module
+
+    catalog = MetadataCatalog(tmp_path / "metadata.sqlite")
+    catalog.create_all()
+    experiment_id = catalog.insert_row(
+        "experiments",
+        {"name": "legacy", "status": "queued", "parameters": {}, "metadata": {}},
+    )
+    job_id = catalog.insert_row(
+        "jobs",
+        {
+            "job_type": "train",
+            "status": "queued",
+            "payload": {"experiment_id": experiment_id, "rq_job_id": "gone"},
+        },
+    )
+    monkeypatch.setattr(
+        job_queue_module.Job,
+        "fetch",
+        lambda job_id, connection=None: (_ for _ in ()).throw(NoSuchJobError("gone")),
+    )
+
+    result = job_queue_module.cancel_job(
+        job_id, catalog=catalog, queue=SimpleNamespace(connection=object())
+    )
+
+    with catalog.engine.connect() as connection:
+        experiment = (
+            connection.execute(
+                select(experiments).where(experiments.c.id == experiment_id)
+            )
+            .mappings()
+            .one()
+        )
+    assert result.status == "cancelled"
+    assert experiment["status"] == "cancelled"
+
+
 def test_delete_already_finished_job_only_logs(monkeypatch, tmp_path) -> None:
     """Finished jobs should not be changed by cancellation requests."""
 

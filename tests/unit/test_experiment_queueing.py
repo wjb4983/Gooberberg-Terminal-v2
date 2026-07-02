@@ -7,19 +7,39 @@ from datetime import date
 from types import SimpleNamespace
 
 import pytest
+from apps.api.routes import experiments as experiment_routes
 
+from quant_platform.config.settings import Settings
 from quant_platform.data.storage.catalog import MetadataCatalog
 from quant_platform.experiments.queueing import (
     ExperimentKind,
     build_training_experiment_payload,
     create_and_enqueue_training_experiment,
 )
+from quant_platform.jobs.queue import enqueue_training_job
 from quant_platform.training.schemas import (
     LossName,
     OptimizerName,
     TargetDefinition,
     TaskType,
 )
+
+
+class _FakeQueue:
+    name = "test-queue"
+
+    def __init__(self) -> None:
+        self.enqueued: list[dict[str, object]] = []
+
+    def enqueue(self, task_path, catalog_job_id, payload, *, job_id):
+        self.enqueued.append(
+            {
+                "task_path": task_path,
+                "catalog_job_id": catalog_job_id,
+                "payload": dict(payload),
+                "job_id": job_id,
+            }
+        )
 
 
 def test_build_training_experiment_payload_shape_and_json_serialization() -> None:
@@ -202,3 +222,82 @@ def test_create_and_enqueue_training_experiment_delegates_to_training_queue(
     assert experiments[0]["name"] == "nightly training"
     assert experiments[0]["status"] == "queued"
     assert enqueued_payloads[0]["experiment_id"] == experiment_id
+
+
+def test_api_and_ui_training_jobs_use_same_job_type(monkeypatch, tmp_path) -> None:
+    """API and UI queueing paths should both persist training jobs as training."""
+
+    settings = Settings(catalog_db_path=tmp_path / "metadata.sqlite")
+    catalog = MetadataCatalog(settings.catalog_db_path)
+    catalog.create_all()
+    dataset_id = catalog.insert_row(
+        "dataset_definitions",
+        {"name": "prices", "version": "1", "schema": {}, "metadata": {}},
+    )
+    model_id = catalog.insert_row(
+        "model_definitions",
+        {
+            "name": "baseline",
+            "version": "1",
+            "model_type": "mlp",
+            "artifact_uri": None,
+            "parameters": {},
+            "metadata": {},
+        },
+    )
+    monkeypatch.setattr(experiment_routes, "_catalog", lambda: catalog)
+
+    api_queue = _FakeQueue()
+    monkeypatch.setattr(
+        experiment_routes,
+        "enqueue_training_job",
+        lambda payload: enqueue_training_job(
+            payload, settings=settings, queue=api_queue
+        ),
+    )
+    api_response = experiment_routes.queue_experiment(
+        experiment_routes.ExperimentQueueRequest.model_validate(
+            {
+                "name": "api training",
+                "dataset_id": dataset_id,
+                "model_id": model_id,
+                "split": {
+                    "train_start": "2024-01-01",
+                    "train_end": "2024-01-31",
+                    "validation_start": "2024-02-01",
+                    "validation_end": "2024-02-15",
+                },
+            }
+        )
+    )
+
+    ui_payload = build_training_experiment_payload(
+        experiment_name="ui training",
+        dataset={"id": dataset_id, "name": "prices", "version": "1"},
+        model={"id": model_id, "name": "baseline", "model_type": "mlp"},
+        task_type=TaskType.REGRESSION,
+        target=TargetDefinition(),
+        split={
+            "train_start": date(2024, 1, 1),
+            "train_end": date(2024, 1, 31),
+            "validation_start": date(2024, 2, 1),
+            "validation_end": date(2024, 2, 15),
+        },
+        training={"epochs": 1},
+    )
+    ui_queue = _FakeQueue()
+    _, ui_queued = create_and_enqueue_training_experiment(
+        catalog=catalog,
+        name="ui training",
+        payload=ui_payload,
+        enqueue=lambda payload: enqueue_training_job(
+            payload, settings=settings, queue=ui_queue
+        ),
+    )
+
+    jobs = catalog.list_rows("jobs")
+
+    assert api_response.job_id != ui_queued.catalog_job_id
+    assert {job["job_type"] for job in jobs} == {"training"}
+    assert jobs[0]["job_type"] == jobs[1]["job_type"] == "training"
+    assert ui_queued.job_type == "training"

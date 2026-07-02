@@ -45,7 +45,7 @@ class TaskType(StrEnum):
     INGEST = "ingest"
     BACKFILL = "backfill"
     FEATURE_BUILD = "feature_build"
-    TRAIN = "train"
+    TRAIN = "training"
     EVALUATE = "evaluate"
     PREDICT = "predict"
     EXPORT = "export"

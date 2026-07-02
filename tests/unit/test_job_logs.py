@@ -57,6 +57,7 @@ def test_jobs_can_be_filtered_by_monitoring_status(tmp_path) -> None:
 
     assert [job["id"] for job in queued] == [queued_id]
 
+
 class _FakeRegistry:
     def __init__(self, job_ids: set[str]) -> None:
         self._job_ids = job_ids
@@ -153,6 +154,38 @@ def test_reconcile_stale_jobs_cancels_missing_rq_job_and_experiment(tmp_path) ->
     assert list_job_logs(job_id, catalog=catalog)[-1]["message"].startswith(
         "RQ job not found"
     )
+
+
+def test_reconcile_stale_jobs_treats_legacy_train_as_training(tmp_path) -> None:
+    """Legacy train rows should still reconcile linked training experiments."""
+
+    from sqlalchemy import select
+
+    from quant_platform.data.storage.catalog import experiments
+
+    catalog = MetadataCatalog(tmp_path / "metadata.sqlite")
+    catalog.create_all()
+    experiment_id = catalog.insert_row(
+        "experiments",
+        {"name": "legacy-exp", "status": JobStatus.QUEUED.value, "metadata": {}},
+    )
+    catalog.insert_row(
+        "jobs",
+        {
+            "job_type": "train",
+            "status": JobStatus.QUEUED.value,
+            "payload": {"rq_job_id": "missing-rq", "experiment_id": experiment_id},
+        },
+    )
+
+    result = reconcile_stale_jobs(catalog=catalog, queue=_FakeQueue())
+
+    with catalog.engine.connect() as connection:
+        experiment = connection.execute(
+            select(experiments).where(experiments.c.id == experiment_id)
+        ).mappings().one()
+    assert result.reconciled[0].status == JobStatus.CANCELLED.value
+    assert experiment["status"] == JobStatus.CANCELLED.value
 
 
 def test_reconcile_stale_jobs_keeps_jobs_found_in_registry(tmp_path) -> None:
