@@ -22,6 +22,7 @@ dependencies = [
 
 [project.scripts]
 gooberberg-dev = "quant_platform.cli.dev:main"
+gooberberg-schwab-auth = "quant_platform.cli.schwab_auth:main"
 
 [dependency-groups]
 dev = [
