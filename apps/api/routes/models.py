@@ -39,6 +39,7 @@ class ModelResponse(BaseModel):
     parameters: dict[str, Any] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
     regime: dict[str, Any] | None = None
+    regime_switching: dict[str, Any] | None = None
     created_at: datetime | None = None
 
 
@@ -81,6 +82,7 @@ def _model_response(row: Any) -> ModelResponse:
         parameters=mapping.get("parameters") or {},
         metadata=mapping.get("metadata") or {},
         regime=(mapping.get("metadata") or {}).get("regime"),
+        regime_switching=(mapping.get("metadata") or {}).get("regime_switching"),
         created_at=mapping.get("created_at"),
     )
 

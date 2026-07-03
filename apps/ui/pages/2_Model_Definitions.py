@@ -8,6 +8,7 @@ import pandas as pd
 import streamlit as st
 from apps.ui.regime_helpers import (
     model_regime_config,
+    model_regime_switching_config,
     parse_csv_columns,
     parse_regime_weights,
 )
@@ -19,6 +20,7 @@ from quant_platform.models.schemas import (
     ModelDefinition,
     ModelType,
     RegimeDetectorType,
+    RegimeSwitchingType,
 )
 
 MODEL_TEMPLATES: dict[str, dict[str, Any]] = {
@@ -72,6 +74,26 @@ MODEL_TEMPLATES: dict[str, dict[str, Any]] = {
         "input_size": 8,
         "output_size": 1,
     },
+    "Regime Detector": {
+        "model_type": ModelType.REGIME_DETECTOR,
+        "layer_count": 1,
+        "hidden_size": 16,
+        "dropout": 0.0,
+        "activation": Activation.RELU,
+        "sequence_length": 20,
+        "input_size": 1,
+        "output_size": 1,
+    },
+    "Regime Switching Allocation": {
+        "model_type": ModelType.REGIME_SWITCHING,
+        "layer_count": 1,
+        "hidden_size": 16,
+        "dropout": 0.0,
+        "activation": Activation.RELU,
+        "sequence_length": 20,
+        "input_size": 1,
+        "output_size": 1,
+    },
 }
 
 
@@ -94,6 +116,8 @@ def _definition_rows() -> list[dict[str, Any]]:
                 "sequence_length": definition.sequence_length,
                 "input_size": definition.input_size,
                 "output_size": definition.output_size,
+                "regime_detector": definition.metadata.get("regime"),
+                "regime_switching": definition.metadata.get("regime_switching"),
             }
         )
     return rows
@@ -113,7 +137,14 @@ with st.form("model_definition"):
 
     left, right = st.columns(2)
     with left:
-        name = st.text_input("Model definition name", value="baseline_mlp")
+        default_name = (
+            "baseline_regime_switching"
+            if template["model_type"] == ModelType.REGIME_SWITCHING
+            else "baseline_regime_detector"
+            if template["model_type"] == ModelType.REGIME_DETECTOR
+            else "baseline_mlp"
+        )
+        name = st.text_input("Model definition name", value=default_name)
         version = st.text_input("Version", value="1")
         model_type = st.selectbox(
             "Model type",
@@ -172,7 +203,10 @@ with st.form("model_definition"):
         )
 
     st.subheader("Regime detection (optional)")
-    regime_enabled = st.checkbox("Enable regime detection", value=False)
+    regime_enabled = st.checkbox(
+        "Enable regime detection",
+        value=template["model_type"] == ModelType.REGIME_DETECTOR,
+    )
     regime_cols = st.columns(5)
     with regime_cols[0]:
         regime_detector_type = st.selectbox(
@@ -212,9 +246,57 @@ with st.form("model_definition"):
         feature_columns=parse_csv_columns(regime_feature_columns_raw),
         regime_weights=parse_regime_weights(regime_weights_raw),
     )
+    st.subheader("Regime switching (optional)")
+    switching_enabled = st.checkbox(
+        "Enable regime switching",
+        value=template["model_type"] == ModelType.REGIME_SWITCHING,
+    )
+    switch_cols = st.columns(5)
+    with switch_cols[0]:
+        switching_type = st.selectbox(
+            "Switching type",
+            list(RegimeSwitchingType),
+            format_func=lambda value: value.value,
+            disabled=not switching_enabled,
+        )
+    with switch_cols[1]:
+        switching_regime_column = st.text_input(
+            "Switching regime column", value="regime", disabled=not switching_enabled
+        )
+    with switch_cols[2]:
+        switching_signal_column = st.text_input(
+            "Switching signal column", value="signal", disabled=not switching_enabled
+        )
+    with switch_cols[3]:
+        switching_target_weight_column = st.text_input(
+            "Switching target weight column",
+            value="target_weight",
+            disabled=not switching_enabled,
+        )
+    with switch_cols[4]:
+        switching_features_raw = st.text_input(
+            "Switching feature columns", value="return", disabled=not switching_enabled
+        )
+    switching_weights_raw = st.text_area(
+        "Switching regime-to-weight/leverage mapping",
+        value="high_risk: 0.25",
+        disabled=not switching_enabled,
+    )
+    regime_switching_config = model_regime_switching_config(
+        enabled=switching_enabled,
+        switching_type=switching_type,
+        regime_column=switching_regime_column.strip(),
+        signal_column=switching_signal_column.strip(),
+        target_weight_column=switching_target_weight_column.strip(),
+        feature_columns=parse_csv_columns(switching_features_raw),
+        regime_weights=parse_regime_weights(switching_weights_raw),
+    )
+
     metadata = {"template": template_name}
     if regime_config is not None:
         metadata["regime"] = regime_config
+    if regime_switching_config is not None:
+        metadata["regime_switching"] = regime_switching_config
 
     definition = ModelDefinition(
         name=name.strip(),

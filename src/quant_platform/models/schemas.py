@@ -399,6 +399,7 @@ RegimeSwitchingConfig = (
 
 
 _REGIME_CONFIG_ADAPTER = TypeAdapter(RegimeConfig)
+_REGIME_SWITCHING_CONFIG_ADAPTER = TypeAdapter(RegimeSwitchingConfig)
 
 
 class ModelType(StrEnum):
@@ -410,6 +411,7 @@ class ModelType(StrEnum):
     TEMPORAL_CNN = "temporal_cnn"
     TRANSFORMER = "transformer"
     REGIME_DETECTOR = "regime_detector"
+    REGIME_SWITCHING = "regime_switching"
 
 
 class BaseModelConfig(BaseModel):
@@ -507,6 +509,8 @@ class ModelDefinition(BaseModel):
         }
         if self.model_type == ModelType.REGIME_DETECTOR:
             parameters["regime"] = self.to_regime_config_dict()
+        elif self.model_type == ModelType.REGIME_SWITCHING:
+            parameters["regime_switching"] = self.to_regime_switching_config_dict()
         else:
             parameters["config"] = self.to_model_config_dict()
         return parameters
@@ -521,11 +525,27 @@ class ModelDefinition(BaseModel):
         config = _REGIME_CONFIG_ADAPTER.validate_python(dict(raw_config))
         return config.model_dump(mode="json")
 
+    def to_regime_switching_config_dict(self) -> dict[str, Any]:
+        """Return the validated regime switching config stored in metadata."""
+
+        raw_config = self.metadata.get("regime_switching")
+        if not isinstance(raw_config, Mapping):
+            msg = (
+                "metadata['regime_switching'] must contain a regime switching "
+                "config mapping"
+            )
+            raise ValueError(msg)
+        config = _REGIME_SWITCHING_CONFIG_ADAPTER.validate_python(dict(raw_config))
+        return config.model_dump(mode="json")
+
     def to_model_config_dict(self) -> dict[str, Any]:
         """Return a best-effort runtime model config matching existing builders."""
 
-        if self.model_type == ModelType.REGIME_DETECTOR:
-            msg = "regime detector definitions do not have neural model configs"
+        if self.model_type in {ModelType.REGIME_DETECTOR, ModelType.REGIME_SWITCHING}:
+            msg = (
+                "regime detector definitions and switching definitions do not "
+                "have neural model configs"
+            )
             raise ValueError(msg)
 
         base = {
