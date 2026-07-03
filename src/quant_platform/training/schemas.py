@@ -92,6 +92,18 @@ class EarlyStoppingConfig(BaseModel):
     monitor: str = "validation_loss"
 
 
+class RegimeTrainingConfig(BaseModel):
+    """Optional regime-detection settings for training runs."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    detector: dict[str, Any] | None = None
+    regime_column: str = "regime"
+    include_regime_feature: bool = True
+    train_per_regime_models: bool = False
+
+
 class TrainingConfig(BaseModel):
     """Configuration for a minimal but functional training run."""
 
@@ -119,6 +131,7 @@ class TrainingConfig(BaseModel):
         )
     )
     walk_forward: WalkForwardConfig = Field(default_factory=WalkForwardConfig)
+    regime: RegimeTrainingConfig = Field(default_factory=RegimeTrainingConfig)
     batch_size: int = Field(default=16, gt=0)
     epochs: int = Field(default=2, gt=0)
     optimizer: OptimizerName = OptimizerName.ADAM
