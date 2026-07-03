@@ -13,14 +13,20 @@ from quant_platform.models import (
     ClusteringRegimeDetector,
     HMMRegimeConfig,
     HMMRegimeDetector,
+    MarkovSwitchingConfig,
     PCARegimeConfig,
     PCARegimeDetector,
     RollingZScoreRegimeConfig,
+    StateDependentRiskConfig,
+    StateDependentRiskModel,
     StateWeightedAllocationConfig,
     StateWeightedAllocationModel,
+    SwitchingLinearConfig,
+    SwitchingLinearModel,
     ThresholdRegimeConfig,
     ThresholdRegimeDetector,
     build_regime_detector_from_dict,
+    build_regime_switching_model_from_dict,
 )
 
 
@@ -57,6 +63,9 @@ def _market_frame() -> pd.DataFrame:
         PCARegimeConfig(),
         HMMRegimeConfig(),
         StateWeightedAllocationConfig(),
+        MarkovSwitchingConfig(),
+        SwitchingLinearConfig(),
+        StateDependentRiskConfig(),
     ],
 )
 def test_baseline_regime_configs_validate_with_defaults(config) -> None:
@@ -86,6 +95,7 @@ def test_regime_configs_reject_empty_feature_columns() -> None:
         ClusteringRegimeConfig,
         PCARegimeConfig,
         HMMRegimeConfig,
+        MarkovSwitchingConfig,
     ],
 )
 def test_regime_configs_reject_non_positive_lookback(config_type) -> None:
@@ -271,3 +281,65 @@ def test_hmm_regime_detector_raises_clear_error_when_backend_missing(
 
     with pytest.raises(ImportError, match="HMMRegimeDetector requires.*hmmlearn"):
         detector.fit(data)
+
+
+def test_switching_linear_model_routes_rows_by_regime_label() -> None:
+    data = pd.DataFrame(
+        {
+            "regime": ["calm", "calm", "stress", "stress"],
+            "feature": [1.0, 2.0, 1.0, 2.0],
+            "target": [2.0, 4.0, 10.0, 20.0],
+        }
+    )
+    model = SwitchingLinearModel(
+        SwitchingLinearConfig(feature_columns=("feature",), target_column="target")
+    ).fit(data)
+
+    predictions = model.predict(
+        pd.DataFrame(
+            {
+                "regime": ["calm", "stress", "unknown"],
+                "feature": [3.0, 3.0, 3.0],
+            }
+        )
+    )
+
+    assert predictions.tolist() == pytest.approx([6.0, 30.0, 18.0])
+
+
+def test_state_dependent_risk_applies_risk_controls_per_regime() -> None:
+    data = pd.DataFrame(
+        {
+            "regime": ["calm", "stress", "stress"],
+            "signal": [1.0, 1.0, 1.0],
+            "volatility": [0.10, 0.50, 0.50],
+            "return": [0.0, 0.0, -1.1],
+        }
+    )
+    model = StateDependentRiskModel(
+        StateDependentRiskConfig(
+            volatility_target_by_regime={"calm": 0.20, "stress": 0.25},
+            max_leverage_by_regime={"calm": 1.5, "stress": 0.4},
+            cash_allocation_by_regime={"stress": 0.25},
+            stop_loss_multiplier_by_regime={"stress": 2.0},
+        )
+    )
+
+    transformed = model.transform_signals(data)
+
+    assert transformed.loc[0, "risk_adjusted_signal"] == 1.5
+    assert transformed.loc[1, "risk_adjusted_signal"] == 0.375
+    assert transformed.loc[2, "risk_adjusted_signal"] == 0.0
+
+
+def test_regime_switching_factory_builds_non_neural_models() -> None:
+    assert isinstance(
+        build_regime_switching_model_from_dict({"switching_type": "switching_linear"}),
+        SwitchingLinearModel,
+    )
+    assert isinstance(
+        build_regime_switching_model_from_dict(
+            {"switching_type": "state_dependent_risk"}
+        ),
+        StateDependentRiskModel,
+    )
