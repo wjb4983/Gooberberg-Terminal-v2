@@ -25,6 +25,10 @@ gooberberg-dev = "quant_platform.cli.dev:main"
 gooberberg-schwab-auth = "quant_platform.cli.schwab_auth:main"
 
 [dependency-groups]
+regime = [
+    "hmmlearn>=0.3.0",
+]
+
 dev = [
     "mypy>=1.10.0",
     "pytest>=8.2.0",

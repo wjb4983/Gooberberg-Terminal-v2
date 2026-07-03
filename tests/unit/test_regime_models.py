@@ -12,6 +12,7 @@ from quant_platform.models import (
     ClusteringRegimeConfig,
     ClusteringRegimeDetector,
     HMMRegimeConfig,
+    HMMRegimeDetector,
     PCARegimeConfig,
     PCARegimeDetector,
     RollingZScoreRegimeConfig,
@@ -92,7 +93,7 @@ def test_regime_configs_reject_non_positive_lookback(config_type) -> None:
         config_type(lookback=0)
 
 
-@pytest.mark.parametrize("detector_type", ["not_supported", "hmm"])
+@pytest.mark.parametrize("detector_type", ["not_supported"])
 def test_regime_detector_factory_rejects_unsupported_detector_types(
     detector_type: str,
 ) -> None:
@@ -245,3 +246,28 @@ def test_regime_detector_factory_builds_new_detector_families() -> None:
         build_regime_detector_from_dict({"detector_type": "pca", "window_size": 3}),
         PCARegimeDetector,
     )
+    assert isinstance(
+        build_regime_detector_from_dict({"detector_type": "hmm"}),
+        HMMRegimeDetector,
+    )
+
+
+def test_hmm_regime_detector_raises_clear_error_when_backend_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    data = _synthetic_regime_frame()
+    detector = HMMRegimeDetector(
+        HMMRegimeConfig(feature_columns=("return", "volume_change"))
+    )
+
+    def missing_backend(name: str):
+        if name == "hmmlearn.hmm":
+            raise ImportError("no hmmlearn")
+        raise AssertionError(f"unexpected import: {name}")
+
+    monkeypatch.setattr(
+        "quant_platform.models.regime.importlib.import_module", missing_backend
+    )
+
+    with pytest.raises(ImportError, match="HMMRegimeDetector requires.*hmmlearn"):
+        detector.fit(data)

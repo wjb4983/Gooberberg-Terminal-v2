@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import importlib
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
 import numpy as np
 import pandas as pd
@@ -11,6 +12,7 @@ import pandas as pd
 from quant_platform.models.schemas import (
     ChangePointRegimeConfig,
     ClusteringRegimeConfig,
+    HMMRegimeConfig,
     PCARegimeConfig,
     StateWeightedAllocationConfig,
 )
@@ -508,6 +510,73 @@ class PCARegimeDetector(BaseRegimeDetector):
                     eigvals[: self.config.n_components].sum() / total
                 )
         return scores
+
+
+class HMMRegimeDetector(BaseRegimeDetector):
+    """Hidden Markov model regime detector using optional ``hmmlearn`` backend.
+
+    The HMM backend is imported lazily during fitting so the base runtime does not
+    require optional research dependencies unless callers instantiate and fit this
+    detector.
+    """
+
+    def __init__(
+        self,
+        config: HMMRegimeConfig | None = None,
+        *,
+        labels: RegimeLabels | None = None,
+    ) -> None:
+        config = config or HMMRegimeConfig()
+        super().__init__(regime_column=config.regime_column, labels=labels)
+        self.config = config
+        self.required_columns = set(config.feature_columns)
+        self.model_: Any | None = None
+        self.label_order_: dict[int, RegimeLabel] = {}
+
+    def fit(self, data: pd.DataFrame) -> HMMRegimeDetector:
+        self._validate_required_columns(data)
+        gaussian_hmm = self._gaussian_hmm_cls()
+        matrix = self._feature_matrix(data)
+        self.model_ = gaussian_hmm(
+            n_components=self.config.n_regimes,
+            covariance_type=self.config.covariance_type,
+            n_iter=self.config.max_iter,
+            random_state=self.config.seed,
+        )
+        self.model_.fit(matrix)
+        means = np.asarray(self.model_.means_, dtype=float)
+        order = np.argsort(np.linalg.norm(means, axis=1))
+        labels = [self.labels.normal, self.labels.high_volatility, self.labels.stressed]
+        self.label_order_ = {
+            int(state): labels[min(rank, 2)] for rank, state in enumerate(order)
+        }
+        self.is_fitted = True
+        return self
+
+    def predict(self, data: pd.DataFrame) -> pd.Series:
+        self._validate_required_columns(data)
+        if not self.is_fitted:
+            self.fit(data)
+        assert self.model_ is not None
+        states = self.model_.predict(self._feature_matrix(data))
+        values = [self.label_order_[int(state)] for state in states]
+        return pd.Series(values, index=data.index, name=self.regime_column)
+
+    def _feature_matrix(self, data: pd.DataFrame) -> np.ndarray:
+        frame = data.loc[:, self.config.feature_columns].astype(float)
+        return np.nan_to_num(frame.to_numpy(dtype=float))
+
+    @staticmethod
+    def _gaussian_hmm_cls() -> Any:
+        try:
+            backend = importlib.import_module("hmmlearn.hmm")
+        except ImportError as exc:
+            raise ImportError(
+                "HMMRegimeDetector requires the optional 'hmmlearn' dependency. "
+                "Install the project's regime/research optional dependency group "
+                "or install hmmlearn separately to use detector_type='hmm'."
+            ) from exc
+        return backend.GaussianHMM
 
 
 class StateWeightedAllocationModel:

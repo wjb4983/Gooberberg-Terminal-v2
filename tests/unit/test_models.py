@@ -165,8 +165,8 @@ def test_regime_configs_reject_incompatible_column_names() -> None:
 
 
 def test_regime_configs_validate_n_regimes_compatibility() -> None:
-    with pytest.raises(ValidationError, match="less than or equal to lookback"):
-        PCARegimeConfig(lookback=2, n_regimes=3)
+    with pytest.raises(ValidationError, match="less than or equal to window_size"):
+        PCARegimeConfig(window_size=2, n_regimes=3)
 
     with pytest.raises(ValidationError, match="state_weights length"):
         StateWeightedAllocationConfig(n_regimes=3)
@@ -271,9 +271,12 @@ def test_build_regime_detector_from_dict_instantiates_zscore_config() -> None:
     assert detector.regime_column == "market_regime"
 
 
-def test_build_regime_detector_from_dict_rejects_unsupported_type() -> None:
-    with pytest.raises(ValueError, match="unsupported regime detector type: hmm"):
-        build_regime_detector_from_dict({"detector_type": "hmm"})
+def test_build_regime_detector_from_dict_instantiates_hmm_config() -> None:
+    from quant_platform.models import HMMRegimeDetector
+
+    assert isinstance(
+        build_regime_detector_from_dict({"detector_type": "hmm"}), HMMRegimeDetector
+    )
 
 
 def test_build_regime_detector_rejects_unsupported_config() -> None:
