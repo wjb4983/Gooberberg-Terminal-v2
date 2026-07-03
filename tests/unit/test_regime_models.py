@@ -7,9 +7,13 @@ import pytest
 from pydantic import ValidationError
 
 from quant_platform.models import (
+    ChangePointRegimeConfig,
+    ChangePointRegimeDetector,
     ClusteringRegimeConfig,
+    ClusteringRegimeDetector,
     HMMRegimeConfig,
     PCARegimeConfig,
+    PCARegimeDetector,
     RollingZScoreRegimeConfig,
     StateWeightedAllocationConfig,
     StateWeightedAllocationModel,
@@ -47,6 +51,7 @@ def _market_frame() -> pd.DataFrame:
     [
         ThresholdRegimeConfig(),
         RollingZScoreRegimeConfig(),
+        ChangePointRegimeConfig(),
         ClusteringRegimeConfig(),
         PCARegimeConfig(),
         HMMRegimeConfig(),
@@ -76,6 +81,7 @@ def test_regime_configs_reject_empty_feature_columns() -> None:
     [
         ThresholdRegimeConfig,
         RollingZScoreRegimeConfig,
+        ChangePointRegimeConfig,
         ClusteringRegimeConfig,
         PCARegimeConfig,
         HMMRegimeConfig,
@@ -86,7 +92,7 @@ def test_regime_configs_reject_non_positive_lookback(config_type) -> None:
         config_type(lookback=0)
 
 
-@pytest.mark.parametrize("detector_type", ["not_supported", "change_point", "hmm"])
+@pytest.mark.parametrize("detector_type", ["not_supported", "hmm"])
 def test_regime_detector_factory_rejects_unsupported_detector_types(
     detector_type: str,
 ) -> None:
@@ -160,3 +166,82 @@ def test_state_weighted_allocation_reduces_high_risk_exposure() -> None:
     assert transformed.loc[0, "signal"] == 1.0
     assert transformed.loc[1, "signal"] == 0.25
     assert data.loc[1, "signal"] == 1.0
+
+
+def _synthetic_regime_frame() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "return": [0.01, 0.011, 0.009, 0.012, 0.20, 0.22, 0.18, 0.21],
+            "volume_change": [0.0, 0.01, -0.01, 0.0, 1.0, 0.9, 1.1, 1.0],
+        }
+    )
+
+
+def test_change_point_regime_detector_flags_shifted_segment() -> None:
+    data = _synthetic_regime_frame()
+    detector = ChangePointRegimeDetector(
+        ChangePointRegimeConfig(
+            window_size=2,
+            feature_columns=("return", "volume_change"),
+            n_regimes=2,
+        )
+    )
+
+    regimes = detector.fit(data).predict(data)
+
+    assert len(regimes) == len(data)
+    assert regimes.index.equals(data.index)
+    assert regimes.iloc[4] == 2
+
+
+def test_clustering_regime_detector_is_deterministic_on_tiny_data() -> None:
+    data = _synthetic_regime_frame()
+    config = ClusteringRegimeConfig(
+        window_size=4,
+        n_regimes=2,
+        feature_columns=("return", "volume_change"),
+        random_state=7,
+    )
+
+    first = ClusteringRegimeDetector(config).fit(data).predict(data)
+    second = ClusteringRegimeDetector(config).fit(data).predict(data)
+
+    assert first.tolist() == second.tolist()
+    assert set(first.unique()) == {0, 1}
+    assert first.iloc[-1] == 1
+
+
+def test_pca_regime_detector_labels_high_variance_window() -> None:
+    data = _synthetic_regime_frame()
+    detector = PCARegimeDetector(
+        PCARegimeConfig(
+            window_size=3,
+            n_regimes=2,
+            feature_columns=("return", "volume_change"),
+            score_method="first_component",
+        )
+    )
+
+    regimes = detector.fit(data).predict(data)
+
+    assert len(regimes) == len(data)
+    assert regimes.iloc[4] == 2
+
+
+def test_regime_detector_factory_builds_new_detector_families() -> None:
+    assert isinstance(
+        build_regime_detector_from_dict(
+            {"detector_type": "change_point", "window_size": 3}
+        ),
+        ChangePointRegimeDetector,
+    )
+    assert isinstance(
+        build_regime_detector_from_dict(
+            {"detector_type": "clustering", "window_size": 3}
+        ),
+        ClusteringRegimeDetector,
+    )
+    assert isinstance(
+        build_regime_detector_from_dict({"detector_type": "pca", "window_size": 3}),
+        PCARegimeDetector,
+    )

@@ -137,13 +137,32 @@ class RollingZScoreRegimeConfig(BaseRegimeConfig):
         return self
 
 
+class ChangePointRegimeConfig(BaseRegimeConfig):
+    """Configuration for rolling mean/variance change-point detectors."""
+
+    detector_type: Literal[RegimeDetectorType.CHANGE_POINT] = (
+        RegimeDetectorType.CHANGE_POINT
+    )
+    window_size: int = Field(default=20, gt=1)
+    n_regimes: int = Field(default=2, gt=1)
+    feature_columns: tuple[str, ...] = Field(default=("return",), min_length=1)
+
+    @model_validator(mode="after")
+    def _validate_change_point_config(self) -> ChangePointRegimeConfig:
+        self._validate_feature_columns(self.feature_columns, self.regime_column)
+        if self.n_regimes not in {2, 3}:
+            msg = "change-point regimes support n_regimes of 2 or 3"
+            raise ValueError(msg)
+        return self
+
+
 class ClusteringRegimeConfig(BaseRegimeConfig):
     """Configuration for feature clustering regime detectors."""
 
     detector_type: Literal[RegimeDetectorType.CLUSTERING] = (
         RegimeDetectorType.CLUSTERING
     )
-    lookback: int = Field(default=20, gt=1)
+    window_size: int = Field(default=20, gt=1)
     n_regimes: int = Field(default=2, gt=1)
     feature_columns: tuple[str, ...] = Field(default=("return",), min_length=1)
     random_state: int = 0
@@ -151,8 +170,8 @@ class ClusteringRegimeConfig(BaseRegimeConfig):
     @model_validator(mode="after")
     def _validate_clustering_config(self) -> ClusteringRegimeConfig:
         self._validate_feature_columns(self.feature_columns, self.regime_column)
-        if self.n_regimes > self.lookback:
-            msg = "n_regimes must be less than or equal to lookback"
+        if self.n_regimes > self.window_size:
+            msg = "n_regimes must be less than or equal to window_size"
             raise ValueError(msg)
         return self
 
@@ -161,10 +180,13 @@ class PCARegimeConfig(BaseRegimeConfig):
     """Configuration for PCA-based regime detectors."""
 
     detector_type: Literal[RegimeDetectorType.PCA] = RegimeDetectorType.PCA
-    lookback: int = Field(default=20, gt=1)
+    window_size: int = Field(default=20, gt=1)
     n_regimes: int = Field(default=2, gt=1)
     feature_columns: tuple[str, ...] = Field(default=("return",), min_length=1)
     n_components: int = Field(default=1, gt=0)
+    score_method: Literal["explained_variance", "first_component"] = (
+        "explained_variance"
+    )
 
     @model_validator(mode="after")
     def _validate_pca_config(self) -> PCARegimeConfig:
@@ -172,8 +194,8 @@ class PCARegimeConfig(BaseRegimeConfig):
         if self.n_components > len(self.feature_columns):
             msg = "n_components must be less than or equal to feature column count"
             raise ValueError(msg)
-        if self.n_regimes > self.lookback:
-            msg = "n_regimes must be less than or equal to lookback"
+        if self.n_regimes > self.window_size:
+            msg = "n_regimes must be less than or equal to window_size"
             raise ValueError(msg)
         return self
 
@@ -182,7 +204,7 @@ class HMMRegimeConfig(BaseRegimeConfig):
     """Configuration for hidden Markov model regime detectors."""
 
     detector_type: Literal[RegimeDetectorType.HMM] = RegimeDetectorType.HMM
-    lookback: int = Field(default=20, gt=1)
+    window_size: int = Field(default=20, gt=1)
     n_regimes: int = Field(default=2, gt=1)
     feature_columns: tuple[str, ...] = Field(default=("return",), min_length=1)
     covariance_type: Literal["diag", "full"] = "diag"
@@ -191,8 +213,8 @@ class HMMRegimeConfig(BaseRegimeConfig):
     @model_validator(mode="after")
     def _validate_hmm_config(self) -> HMMRegimeConfig:
         self._validate_feature_columns(self.feature_columns, self.regime_column)
-        if self.n_regimes > self.lookback:
-            msg = "n_regimes must be less than or equal to lookback"
+        if self.n_regimes > self.window_size:
+            msg = "n_regimes must be less than or equal to window_size"
             raise ValueError(msg)
         return self
 
@@ -200,6 +222,7 @@ class HMMRegimeConfig(BaseRegimeConfig):
 RegimeConfig = (
     ThresholdRegimeConfig
     | RollingZScoreRegimeConfig
+    | ChangePointRegimeConfig
     | ClusteringRegimeConfig
     | PCARegimeConfig
     | HMMRegimeConfig
