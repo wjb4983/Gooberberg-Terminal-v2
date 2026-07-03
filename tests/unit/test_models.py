@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pandas as pd
 import pytest
 import torch
 from pydantic import ValidationError
@@ -166,3 +167,68 @@ def test_regime_configs_validate_n_regimes_compatibility() -> None:
 
     with pytest.raises(ValidationError, match="state_weights length"):
         StateWeightedAllocationConfig(n_regimes=3)
+
+
+def test_threshold_regime_detector_flags_volatility_and_validates_columns() -> None:
+    from quant_platform.models import ThresholdRegimeDetector
+
+    data = pd.DataFrame({"return": [0.01, -0.02, 0.03, -0.04, 0.05]})
+    detector = ThresholdRegimeDetector(
+        rule="volatility",
+        lookback=3,
+        threshold=0.25,
+        min_periods=3,
+    )
+
+    regimes = detector.fit(data).predict(data)
+
+    assert regimes.iloc[:2].tolist() == [0, 0]
+    assert regimes.iloc[-1] == 1
+    with pytest.raises(ValueError, match="data missing required columns"):
+        detector.predict(pd.DataFrame({"close": [1.0, 2.0, 3.0]}))
+
+
+def test_threshold_regime_detector_supports_multiple_rules() -> None:
+    from quant_platform.models import ThresholdRegimeDetector
+
+    data = pd.DataFrame(
+        {
+            "close": [100.0, 110.0, 90.0, 80.0],
+            "return": [0.01, 0.02, -0.03, -0.04],
+            "benchmark_return": [0.01, 0.02, -0.02, -0.03],
+            "volume": [1000.0, 900.0, 500.0, 400.0],
+        }
+    )
+
+    drawdown = ThresholdRegimeDetector(
+        rule="drawdown", lookback=3, threshold=-0.20, direction="below", min_periods=2
+    )
+    correlation = ThresholdRegimeDetector(
+        rule="correlation", lookback=3, threshold=0.80, direction="above", min_periods=3
+    )
+    liquidity = ThresholdRegimeDetector(
+        rule="liquidity", lookback=2, threshold=700.0, direction="below", min_periods=2
+    )
+
+    assert drawdown.predict(data).iloc[-1] == 2
+    assert correlation.predict(data).iloc[-1] == 2
+    assert liquidity.transform(data)["regime"].iloc[-1] == 2
+
+
+def test_rolling_zscore_regime_detector_emits_deterministic_labels() -> None:
+    from quant_platform.models import RollingZScoreRegimeDetector
+
+    data = pd.DataFrame({"return": [0.0, 0.0, 0.0, 1.0, -1.0]})
+    detector = RollingZScoreRegimeDetector(
+        feature_column="return",
+        lookback=3,
+        entry_zscore=1.0,
+        exit_zscore=0.25,
+        n_regimes=3,
+        min_periods=2,
+    )
+
+    regimes = detector.fit(data).predict(data)
+
+    assert regimes.iloc[3] == 1
+    assert regimes.iloc[4] == 2
