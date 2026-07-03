@@ -9,6 +9,7 @@ import pandas as pd  # type: ignore[import-untyped]
 
 from quant_platform.backtesting.metrics import compute_metrics
 from quant_platform.backtesting.schemas import BacktestConfig, BacktestResult
+from quant_platform.models.factory import build_regime_detector_from_dict
 
 
 @dataclass
@@ -20,12 +21,35 @@ class _Position:
 
 
 def _required_columns(config: BacktestConfig) -> set[str]:
-    return {
+    columns = {
         config.timestamp_column,
         config.symbol_column,
         config.price_column,
         config.signal_column,
     }
+    if config.regime.enabled and config.signal_column == config.regime.regime_column:
+        columns.remove(config.signal_column)
+    return columns
+
+
+def _append_regime_column(
+    market_data: pd.DataFrame, config: BacktestConfig
+) -> pd.DataFrame:
+    if not config.regime.enabled:
+        return market_data
+    if config.regime.detector is None:
+        raise ValueError("regime.detector is required when regime detection is enabled")
+
+    detector_config = dict(config.regime.detector)
+    detector_config.setdefault("regime_column", config.regime.regime_column)
+    detector = build_regime_detector_from_dict(detector_config)
+    data = market_data.copy()
+    try:
+        regimes = detector.fit(data).predict(data)
+    except ValueError as exc:
+        raise ValueError(f"regime detector failed: {exc}") from exc
+    data[config.regime.regime_column] = regimes
+    return data
 
 
 def _fill_price(row: pd.Series, side: float, config: BacktestConfig) -> float:
@@ -84,7 +108,9 @@ def run_backtest(
     if missing:
         raise ValueError(f"market_data missing required columns: {sorted(missing)}")
 
-    data = market_data.sort_values([config.timestamp_column, config.symbol_column])
+    data = _append_regime_column(market_data, config).sort_values(
+        [config.timestamp_column, config.symbol_column]
+    )
     cash = config.initial_cash
     positions: dict[str, _Position] = {}
     latest_prices: dict[str, float] = {}

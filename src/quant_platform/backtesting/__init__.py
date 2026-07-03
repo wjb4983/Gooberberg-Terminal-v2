@@ -7,12 +7,17 @@ from quant_platform.backtesting.artifacts import (
 )
 from quant_platform.backtesting.engine import run_backtest
 from quant_platform.backtesting.metrics import compute_metrics
-from quant_platform.backtesting.schemas import BacktestConfig, BacktestResult
+from quant_platform.backtesting.schemas import (
+    BacktestConfig,
+    BacktestResult,
+    RegimeBacktestConfig,
+)
 
 __all__ = [
     "BacktestArtifactManifest",
     "BacktestConfig",
     "BacktestResult",
+    "RegimeBacktestConfig",
     "backtest_artifact_dir",
     "compute_metrics",
     "run_backtest",
