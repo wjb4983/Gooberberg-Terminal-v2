@@ -10,6 +10,7 @@ from quant_platform.models.regime import (
     BaseRegimeDetector,
     ChangePointRegimeDetector,
     ClusteringRegimeDetector,
+    HMMRegimeDetector,
     PCARegimeDetector,
     RollingZScoreRegimeDetector,
     ThresholdRegimeDetector,
@@ -17,6 +18,7 @@ from quant_platform.models.regime import (
 from quant_platform.models.schemas import (
     ChangePointRegimeConfig,
     ClusteringRegimeConfig,
+    HMMRegimeConfig,
     MLPConfig,
     ModelConfig,
     ModelType,
@@ -121,6 +123,8 @@ def build_regime_detector(config: RegimeConfig) -> BaseRegimeDetector:
         return ClusteringRegimeDetector(config)
     if isinstance(config, PCARegimeConfig):
         return PCARegimeDetector(config)
+    if isinstance(config, HMMRegimeConfig):
+        return HMMRegimeDetector(config)
 
     msg = f"unsupported regime detector config: {type(config).__name__}"
     raise TypeError(msg)
@@ -142,6 +146,8 @@ def build_regime_detector_from_dict(
         parsed = ClusteringRegimeConfig.model_validate(config)
     elif detector_type == RegimeDetectorType.PCA:
         parsed = PCARegimeConfig.model_validate(config)
+    elif detector_type == RegimeDetectorType.HMM:
+        parsed = HMMRegimeConfig.model_validate(config)
     else:
         msg = f"unsupported regime detector type: {detector_type}"
         raise ValueError(msg)

@@ -201,21 +201,18 @@ class PCARegimeConfig(BaseRegimeConfig):
 
 
 class HMMRegimeConfig(BaseRegimeConfig):
-    """Configuration for hidden Markov model regime detectors."""
+    """Configuration for optional hidden Markov model regime detectors."""
 
     detector_type: Literal[RegimeDetectorType.HMM] = RegimeDetectorType.HMM
-    window_size: int = Field(default=20, gt=1)
     n_regimes: int = Field(default=2, gt=1)
     feature_columns: tuple[str, ...] = Field(default=("return",), min_length=1)
-    covariance_type: Literal["diag", "full"] = "diag"
-    random_state: int = 0
+    covariance_type: Literal["diag", "full", "spherical", "tied"] = "diag"
+    max_iter: int = Field(default=100, gt=0)
+    seed: int = 0
 
     @model_validator(mode="after")
     def _validate_hmm_config(self) -> HMMRegimeConfig:
         self._validate_feature_columns(self.feature_columns, self.regime_column)
-        if self.n_regimes > self.window_size:
-            msg = "n_regimes must be less than or equal to window_size"
-            raise ValueError(msg)
         return self
 
 
