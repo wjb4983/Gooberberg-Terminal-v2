@@ -130,7 +130,8 @@ def test_run_backtest_enabled_regime_detection_can_supply_signal_column() -> Non
     assert "regime" not in market_data.columns
 
 
-def test_run_backtest_enabled_regime_detection_missing_columns_raise_clear_error() -> None:
+def test_run_backtest_enabled_regime_detection_missing_columns_raise_clear_error(
+) -> None:
     market_data = pd.DataFrame(
         [
             {
@@ -158,3 +159,41 @@ def test_run_backtest_enabled_regime_detection_missing_columns_raise_clear_error
         ValueError, match="regime detector failed: data missing required columns"
     ):
         run_backtest(market_data, config=config)
+
+
+def test_run_backtest_regime_allocation_reduces_high_risk_exposure() -> None:
+    market_data = pd.DataFrame(
+        [
+            {
+                "timestamp": "2024-01-01",
+                "symbol": "AAPL",
+                "close": 100.0,
+                "signal": 1.0,
+                "regime": "normal",
+            },
+            {
+                "timestamp": "2024-01-02",
+                "symbol": "AAPL",
+                "close": 100.0,
+                "signal": 1.0,
+                "regime": "high_risk",
+            },
+        ]
+    )
+    config = BacktestConfig(
+        regime={
+            "enabled": True,
+            "regime_column": "regime",
+            "allocation": {
+                "regime_weights": {"high_risk": 0.25},
+                "default_weight": 1.0,
+            },
+        }
+    )
+
+    result = run_backtest(market_data, config=config)
+
+    assert len(result.trades) == 2
+    assert result.trades.iloc[0]["quantity"] == 100.0
+    assert result.trades.iloc[1]["quantity"] == -75.0
+    assert "regime" in market_data.columns

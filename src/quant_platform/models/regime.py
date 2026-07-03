@@ -7,6 +7,8 @@ from typing import Literal
 
 import pandas as pd
 
+from quant_platform.models.schemas import StateWeightedAllocationConfig
+
 RegimeRule = Literal["volatility", "trend", "drawdown", "correlation", "liquidity"]
 RegimeLabel = int | str
 
@@ -250,3 +252,42 @@ class RollingZScoreRegimeDetector(BaseRegimeDetector):
             stressed = zscore.le(-self.entry_zscore).fillna(False)
             regimes.loc[stressed] = self.labels.stressed
         return regimes
+
+
+class StateWeightedAllocationModel:
+    """Deterministically scale signal exposure by the observed regime state."""
+
+    def __init__(self, config: StateWeightedAllocationConfig | None = None) -> None:
+        self.config = config or StateWeightedAllocationConfig()
+
+    def transform_signals(self, data: pd.DataFrame) -> pd.DataFrame:
+        """Return a copy with configured signal exposure scaled by regime weights.
+
+        The configured ``signal_column`` is adjusted when present. If it is absent,
+        the configured ``target_weight_column`` is adjusted instead. Regime values
+        are stringified before mapping lookup so numeric detector labels and textual
+        market states can use the same deterministic configuration shape.
+        """
+
+        config = self.config
+        if config.regime_column not in data.columns:
+            raise ValueError(f"data missing required column: {config.regime_column}")
+        allocation_column = config.signal_column
+        if allocation_column not in data.columns:
+            allocation_column = config.target_weight_column
+        if allocation_column not in data.columns:
+            raise ValueError(
+                "data missing configured signal or target weight column: "
+                f"{config.signal_column!r} or {config.target_weight_column!r}"
+            )
+
+        transformed = data.copy()
+        regimes = transformed[config.regime_column].astype(str)
+        regime_weights = regimes.map(config.regime_weights).fillna(
+            config.default_weight
+        )
+        vol_targets = regimes.map(config.regime_vol_targets).fillna(1.0)
+        transformed[allocation_column] = (
+            transformed[allocation_column].astype(float) * regime_weights * vol_targets
+        )
+        return transformed

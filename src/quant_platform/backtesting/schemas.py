@@ -8,6 +8,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from quant_platform.models.schemas import StateWeightedAllocationConfig
+
 
 class PositionSizingMode(StrEnum):
     """Supported placeholder position-sizing modes."""
@@ -89,6 +91,7 @@ class RegimeBacktestConfig(BaseModel):
     detector: dict[str, Any] | None = None
     regime_column: str = "regime"
     signal_adjustment_column: str | None = None
+    allocation: StateWeightedAllocationConfig | dict[str, Any] | None = None
 
 
 class BacktestConfig(BaseModel):

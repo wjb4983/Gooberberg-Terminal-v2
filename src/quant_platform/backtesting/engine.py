@@ -10,6 +10,8 @@ import pandas as pd  # type: ignore[import-untyped]
 from quant_platform.backtesting.metrics import compute_metrics
 from quant_platform.backtesting.schemas import BacktestConfig, BacktestResult
 from quant_platform.models.factory import build_regime_detector_from_dict
+from quant_platform.models.regime import StateWeightedAllocationModel
+from quant_platform.models.schemas import StateWeightedAllocationConfig
 
 
 @dataclass
@@ -38,6 +40,8 @@ def _append_regime_column(
     if not config.regime.enabled:
         return market_data
     if config.regime.detector is None:
+        if config.regime.regime_column in market_data.columns:
+            return market_data
         raise ValueError("regime.detector is required when regime detection is enabled")
 
     detector_config = dict(config.regime.detector)
@@ -50,6 +54,29 @@ def _append_regime_column(
         raise ValueError(f"regime detector failed: {exc}") from exc
     data[config.regime.regime_column] = regimes
     return data
+
+
+def _apply_regime_allocation(
+    data: pd.DataFrame, config: BacktestConfig
+) -> pd.DataFrame:
+    if not config.regime.enabled or config.regime.allocation is None:
+        return data
+    allocation_config = config.regime.allocation
+    if isinstance(allocation_config, dict):
+        allocation_data = dict(allocation_config)
+        allocation_data.setdefault("regime_column", config.regime.regime_column)
+        allocation_data.setdefault("signal_column", config.signal_column)
+        allocation_data.setdefault(
+            "target_weight_column", config.position_sizing.target_weight_column
+        )
+        allocation_config = StateWeightedAllocationConfig.model_validate(
+            allocation_data
+        )
+    model = StateWeightedAllocationModel(allocation_config)
+    try:
+        return model.transform_signals(data)
+    except ValueError as exc:
+        raise ValueError(f"regime allocation failed: {exc}") from exc
 
 
 def _fill_price(row: pd.Series, side: float, config: BacktestConfig) -> float:
@@ -108,7 +135,8 @@ def run_backtest(
     if missing:
         raise ValueError(f"market_data missing required columns: {sorted(missing)}")
 
-    data = _append_regime_column(market_data, config).sort_values(
+    data = _append_regime_column(market_data, config)
+    data = _apply_regime_allocation(data, config).sort_values(
         [config.timestamp_column, config.symbol_column]
     )
     cash = config.initial_cash

@@ -12,6 +12,7 @@ from quant_platform.models.regime import (
     BaseRegimeDetector,
     RegimeLabels,
     RollingZScoreRegimeDetector,
+    StateWeightedAllocationModel,
     ThresholdRegimeDetector,
 )
 from quant_platform.models.registry import ModelRegistry
@@ -60,6 +61,7 @@ __all__ = [
     "RollingZScoreRegimeConfig",
     "RollingZScoreRegimeDetector",
     "StateWeightedAllocationConfig",
+    "StateWeightedAllocationModel",
     "TemporalCNN",
     "TemporalCNNConfig",
     "ThresholdRegimeConfig",
