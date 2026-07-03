@@ -207,11 +207,16 @@ RegimeConfig = (
 
 
 class StateWeightedAllocationConfig(BaseRegimeConfig):
-    """Configuration for deterministic state-weighted allocation switching."""
+    """Configuration for deterministic regime-weighted signal allocation."""
 
     switching_type: Literal[RegimeSwitchingType.STATE_WEIGHTED_ALLOCATION] = (
         RegimeSwitchingType.STATE_WEIGHTED_ALLOCATION
     )
+    signal_column: str = "signal"
+    target_weight_column: str = "target_weight"
+    regime_weights: dict[str, float] = Field(default_factory=dict)
+    regime_vol_targets: dict[str, float] = Field(default_factory=dict)
+    default_weight: float = 1.0
     n_regimes: int = Field(default=2, gt=1)
     feature_columns: tuple[str, ...] = Field(default=("return",), min_length=1)
     state_weights: tuple[float, ...] = Field(default=(0.5, 0.5), min_length=2)
@@ -219,11 +224,27 @@ class StateWeightedAllocationConfig(BaseRegimeConfig):
     @model_validator(mode="after")
     def _validate_state_weights(self) -> StateWeightedAllocationConfig:
         self._validate_feature_columns(self.feature_columns, self.regime_column)
+        for column_name, value in {
+            "signal_column": self.signal_column,
+            "target_weight_column": self.target_weight_column,
+        }.items():
+            if not value or not value.strip():
+                msg = f"{column_name} must be a non-empty column name"
+                raise ValueError(msg)
+            if value == self.regime_column:
+                msg = f"{column_name} must not match regime_column"
+                raise ValueError(msg)
         if len(self.state_weights) != self.n_regimes:
             msg = "state_weights length must match n_regimes"
             raise ValueError(msg)
-        if any(weight < 0.0 for weight in self.state_weights):
-            msg = "state_weights must be non-negative"
+        all_weights = [
+            *self.state_weights,
+            *self.regime_weights.values(),
+            *self.regime_vol_targets.values(),
+            self.default_weight,
+        ]
+        if any(weight < 0.0 for weight in all_weights):
+            msg = "state weights and regime allocation weights must be non-negative"
             raise ValueError(msg)
         if sum(self.state_weights) <= 0.0:
             msg = "state_weights must include at least one positive weight"

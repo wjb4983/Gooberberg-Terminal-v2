@@ -12,6 +12,7 @@ from quant_platform.models import (
     PCARegimeConfig,
     RollingZScoreRegimeConfig,
     StateWeightedAllocationConfig,
+    StateWeightedAllocationModel,
     ThresholdRegimeConfig,
     ThresholdRegimeDetector,
     build_regime_detector_from_dict,
@@ -138,3 +139,24 @@ def test_threshold_regime_labels_known_market_segments() -> None:
     assert set(high_volatility.unique()) >= {0, 1}
     assert set(drawdown.unique()) >= {0, 2}
     assert set(low_liquidity.unique()) >= {0, 2}
+
+
+def test_state_weighted_allocation_reduces_high_risk_exposure() -> None:
+    data = pd.DataFrame(
+        {
+            "regime": ["normal", "high_risk"],
+            "signal": [1.0, 1.0],
+        }
+    )
+    model = StateWeightedAllocationModel(
+        StateWeightedAllocationConfig(
+            regime_weights={"high_risk": 0.25},
+            default_weight=1.0,
+        )
+    )
+
+    transformed = model.transform_signals(data)
+
+    assert transformed.loc[0, "signal"] == 1.0
+    assert transformed.loc[1, "signal"] == 0.25
+    assert data.loc[1, "signal"] == 1.0
