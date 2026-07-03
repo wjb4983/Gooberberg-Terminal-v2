@@ -6,7 +6,220 @@ from collections.abc import Mapping
 from enum import StrEnum
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+
+class RegimeDetectorType(StrEnum):
+    """Supported first-pass market regime detector families."""
+
+    VOLATILITY_THRESHOLD = "volatility_threshold"
+    TREND_THRESHOLD = "trend_threshold"
+    DRAWDOWN_THRESHOLD = "drawdown_threshold"
+    CORRELATION_THRESHOLD = "correlation_threshold"
+    LIQUIDITY_THRESHOLD = "liquidity_threshold"
+    ROLLING_ZSCORE = "rolling_zscore"
+    CHANGE_POINT = "change_point"
+    CLUSTERING = "clustering"
+    PCA = "pca"
+    HMM = "hmm"
+
+
+class RegimeSwitchingType(StrEnum):
+    """Supported first-pass regime-aware switching strategy families."""
+
+    STATE_WEIGHTED_ALLOCATION = "state_weighted_allocation"
+    MARKOV_SWITCHING = "markov_switching"
+    SWITCHING_LINEAR = "switching_linear"
+    STATE_DEPENDENT_RISK = "state_dependent_risk"
+
+
+class BaseRegimeConfig(BaseModel):
+    """Common validation shared by regime detector and switching configs."""
+
+    model_config = ConfigDict(extra="forbid", use_enum_values=False)
+
+    regime_column: str = "regime"
+
+    @field_validator("regime_column")
+    @classmethod
+    def _validate_regime_column(cls, value: str) -> str:
+        if not value or not value.strip():
+            msg = "regime_column must be a non-empty column name"
+            raise ValueError(msg)
+        return value
+
+    @staticmethod
+    def _validate_feature_columns(
+        feature_columns: tuple[str, ...], regime_column: str
+    ) -> None:
+        if any(not column or not column.strip() for column in feature_columns):
+            msg = "feature_columns must contain non-empty column names"
+            raise ValueError(msg)
+        if len(set(feature_columns)) != len(feature_columns):
+            msg = "feature_columns must be unique"
+            raise ValueError(msg)
+        if regime_column in feature_columns:
+            msg = "feature_columns must not include regime_column"
+            raise ValueError(msg)
+
+
+class ThresholdRegimeConfig(BaseRegimeConfig):
+    """Configuration for deterministic threshold-based regime detectors."""
+
+    detector_type: RegimeDetectorType = RegimeDetectorType.VOLATILITY_THRESHOLD
+    lookback: int = Field(default=20, gt=1)
+    feature_column: str = "return"
+    threshold: float = 0.0
+    direction: Literal["above", "below", "outside", "inside"] = "above"
+    lower_threshold: float | None = None
+    upper_threshold: float | None = None
+    n_regimes: int = Field(default=2, gt=1)
+
+    @model_validator(mode="after")
+    def _validate_threshold_config(self) -> ThresholdRegimeConfig:
+        if self.detector_type not in {
+            RegimeDetectorType.VOLATILITY_THRESHOLD,
+            RegimeDetectorType.TREND_THRESHOLD,
+            RegimeDetectorType.DRAWDOWN_THRESHOLD,
+            RegimeDetectorType.CORRELATION_THRESHOLD,
+            RegimeDetectorType.LIQUIDITY_THRESHOLD,
+        }:
+            msg = "detector_type must be a threshold-based regime detector"
+            raise ValueError(msg)
+        if not self.feature_column or not self.feature_column.strip():
+            msg = "feature_column must be a non-empty column name"
+            raise ValueError(msg)
+        if self.feature_column == self.regime_column:
+            msg = "feature_column must not match regime_column"
+            raise ValueError(msg)
+        if self.direction in {"inside", "outside"}:
+            if self.lower_threshold is None or self.upper_threshold is None:
+                msg = (
+                    "inside/outside threshold directions require "
+                    "lower_threshold and upper_threshold"
+                )
+                raise ValueError(msg)
+            if self.lower_threshold >= self.upper_threshold:
+                msg = "lower_threshold must be less than upper_threshold"
+                raise ValueError(msg)
+        if self.n_regimes != 2 and self.direction in {"above", "below"}:
+            msg = "above/below threshold directions require n_regimes=2"
+            raise ValueError(msg)
+        return self
+
+
+class RollingZScoreRegimeConfig(BaseRegimeConfig):
+    """Configuration for rolling z-score regime detectors."""
+
+    detector_type: Literal[RegimeDetectorType.ROLLING_ZSCORE] = (
+        RegimeDetectorType.ROLLING_ZSCORE
+    )
+    lookback: int = Field(default=20, gt=1)
+    feature_column: str = "return"
+    entry_zscore: float = Field(default=2.0, gt=0.0)
+    exit_zscore: float = Field(default=0.5, ge=0.0)
+    n_regimes: int = Field(default=2, gt=1)
+
+    @model_validator(mode="after")
+    def _validate_zscore_config(self) -> RollingZScoreRegimeConfig:
+        if not self.feature_column or not self.feature_column.strip():
+            msg = "feature_column must be a non-empty column name"
+            raise ValueError(msg)
+        if self.feature_column == self.regime_column:
+            msg = "feature_column must not match regime_column"
+            raise ValueError(msg)
+        if self.exit_zscore >= self.entry_zscore:
+            msg = "exit_zscore must be less than entry_zscore"
+            raise ValueError(msg)
+        if self.n_regimes not in {2, 3}:
+            msg = "rolling z-score regimes support n_regimes of 2 or 3"
+            raise ValueError(msg)
+        return self
+
+
+class ClusteringRegimeConfig(BaseRegimeConfig):
+    """Configuration for feature clustering regime detectors."""
+
+    detector_type: Literal[RegimeDetectorType.CLUSTERING] = (
+        RegimeDetectorType.CLUSTERING
+    )
+    lookback: int = Field(default=20, gt=1)
+    n_regimes: int = Field(default=2, gt=1)
+    feature_columns: tuple[str, ...] = Field(default=("return",), min_length=1)
+    random_state: int = 0
+
+    @model_validator(mode="after")
+    def _validate_clustering_config(self) -> ClusteringRegimeConfig:
+        self._validate_feature_columns(self.feature_columns, self.regime_column)
+        if self.n_regimes > self.lookback:
+            msg = "n_regimes must be less than or equal to lookback"
+            raise ValueError(msg)
+        return self
+
+
+class PCARegimeConfig(BaseRegimeConfig):
+    """Configuration for PCA-based regime detectors."""
+
+    detector_type: Literal[RegimeDetectorType.PCA] = RegimeDetectorType.PCA
+    lookback: int = Field(default=20, gt=1)
+    n_regimes: int = Field(default=2, gt=1)
+    feature_columns: tuple[str, ...] = Field(default=("return",), min_length=1)
+    n_components: int = Field(default=1, gt=0)
+
+    @model_validator(mode="after")
+    def _validate_pca_config(self) -> PCARegimeConfig:
+        self._validate_feature_columns(self.feature_columns, self.regime_column)
+        if self.n_components > len(self.feature_columns):
+            msg = "n_components must be less than or equal to feature column count"
+            raise ValueError(msg)
+        if self.n_regimes > self.lookback:
+            msg = "n_regimes must be less than or equal to lookback"
+            raise ValueError(msg)
+        return self
+
+
+class HMMRegimeConfig(BaseRegimeConfig):
+    """Configuration for hidden Markov model regime detectors."""
+
+    detector_type: Literal[RegimeDetectorType.HMM] = RegimeDetectorType.HMM
+    lookback: int = Field(default=20, gt=1)
+    n_regimes: int = Field(default=2, gt=1)
+    feature_columns: tuple[str, ...] = Field(default=("return",), min_length=1)
+    covariance_type: Literal["diag", "full"] = "diag"
+    random_state: int = 0
+
+    @model_validator(mode="after")
+    def _validate_hmm_config(self) -> HMMRegimeConfig:
+        self._validate_feature_columns(self.feature_columns, self.regime_column)
+        if self.n_regimes > self.lookback:
+            msg = "n_regimes must be less than or equal to lookback"
+            raise ValueError(msg)
+        return self
+
+
+class StateWeightedAllocationConfig(BaseRegimeConfig):
+    """Configuration for deterministic state-weighted allocation switching."""
+
+    switching_type: Literal[RegimeSwitchingType.STATE_WEIGHTED_ALLOCATION] = (
+        RegimeSwitchingType.STATE_WEIGHTED_ALLOCATION
+    )
+    n_regimes: int = Field(default=2, gt=1)
+    feature_columns: tuple[str, ...] = Field(default=("return",), min_length=1)
+    state_weights: tuple[float, ...] = Field(default=(0.5, 0.5), min_length=2)
+
+    @model_validator(mode="after")
+    def _validate_state_weights(self) -> StateWeightedAllocationConfig:
+        self._validate_feature_columns(self.feature_columns, self.regime_column)
+        if len(self.state_weights) != self.n_regimes:
+            msg = "state_weights length must match n_regimes"
+            raise ValueError(msg)
+        if any(weight < 0.0 for weight in self.state_weights):
+            msg = "state_weights must be non-negative"
+            raise ValueError(msg)
+        if sum(self.state_weights) <= 0.0:
+            msg = "state_weights must include at least one positive weight"
+            raise ValueError(msg)
+        return self
 
 
 class ModelType(StrEnum):
