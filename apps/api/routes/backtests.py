@@ -32,6 +32,7 @@ class BacktestQueueRequest(BaseModel):
     start_ts: datetime | None = None
     end_ts: datetime | None = None
     config: BacktestConfig = Field(default_factory=BacktestConfig)
+    regime: dict[str, Any] | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
@@ -58,6 +59,7 @@ class BacktestResponse(BaseModel):
     end_ts: datetime | None = None
     results: dict[str, Any] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
+    regime: dict[str, Any] | None = None
     created_at: datetime | None = None
 
 
@@ -92,6 +94,7 @@ def _backtest_response(row: Any) -> BacktestResponse:
         end_ts=mapping.get("end_ts"),
         results=mapping.get("results") or {},
         metadata=mapping.get("metadata") or {},
+        regime=((mapping.get("metadata") or {}).get("config") or {}).get("regime"),
         created_at=mapping.get("created_at"),
     )
 
@@ -132,6 +135,12 @@ def queue_backtest(request: BacktestQueueRequest) -> BacktestQueueResponse:
     catalog = _catalog()
     catalog.create_all()
     dataset = _require_row(catalog, dataset_definitions, request.dataset_id, "dataset")
+    effective_config = request.config
+    if request.regime is not None:
+        config_payload = request.config.model_dump(mode="python")
+        config_payload["regime"] = request.regime
+        effective_config = BacktestConfig.model_validate(config_payload)
+
     model = None
     if request.model_id is not None:
         model = _require_row(
@@ -145,7 +154,7 @@ def queue_backtest(request: BacktestQueueRequest) -> BacktestQueueResponse:
         "signal_strategy": request.signal_strategy,
         "dataset_id": request.dataset_id,
         "dataset_name": dataset["name"],
-        "config": request.config.jsonable(),
+        "config": effective_config.jsonable(),
         **request.metadata,
     }
     backtest_id = catalog.insert_row(
@@ -170,7 +179,7 @@ def queue_backtest(request: BacktestQueueRequest) -> BacktestQueueResponse:
         "dataset_name": dataset["name"],
         "start_ts": request.start_ts.isoformat() if request.start_ts else None,
         "end_ts": request.end_ts.isoformat() if request.end_ts else None,
-        "config": request.config.jsonable(),
+        "config": effective_config.jsonable(),
     }
     job_id = catalog.insert_row(
         "jobs", {"job_type": "backtest", "status": "queued", "payload": payload}

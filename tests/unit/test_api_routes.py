@@ -662,3 +662,97 @@ def test_delete_experiment_cancels_linked_jobs(monkeypatch, tmp_path) -> None:
         )
     assert row["status"] == "cancelled"
     assert row["completed_at"] is not None
+
+
+def test_create_model_accepts_optional_regime_config(monkeypatch, tmp_path) -> None:
+    """Model creation should store optional regime metadata and echo it."""
+
+    from apps.api.routes import models as model_routes
+
+    catalog = MetadataCatalog(tmp_path / "metadata.sqlite")
+    catalog.create_all()
+    monkeypatch.setattr(
+        model_routes,
+        "get_settings",
+        lambda: SimpleNamespace(catalog_db_path=tmp_path / "metadata.sqlite"),
+    )
+
+    regime = {
+        "enabled": True,
+        "detector_type": "volatility_threshold",
+        "lookback": 20,
+        "threshold": 0.1,
+        "feature_columns": ["return"],
+        "regime_weights": {"high_risk": 0.25},
+    }
+    response = model_routes.create_model(
+        model_routes.ModelCreateRequest.model_validate(
+            {
+                "definition": {
+                    "name": "regime-aware-mlp",
+                    "version": "1",
+                    "model_type": "mlp",
+                },
+                "regime": regime,
+            }
+        )
+    )
+
+    body = response.model_dump(mode="json")
+    assert body["regime"] == regime
+    assert body["metadata"]["regime"] == regime
+
+
+def test_queue_backtest_accepts_optional_regime_config(monkeypatch, tmp_path) -> None:
+    """Backtest queueing should merge optional regime config into payloads."""
+
+    from apps.api.routes import backtests as backtest_routes
+
+    catalog = MetadataCatalog(tmp_path / "metadata.sqlite")
+    catalog.create_all()
+    dataset_id = catalog.insert_row(
+        "dataset_definitions",
+        {"name": "prices", "version": "v1", "schema": {}, "metadata": {}},
+    )
+    model_id = catalog.insert_row(
+        "model_definitions",
+        {
+            "name": "baseline",
+            "version": "v1",
+            "model_type": "mlp",
+            "parameters": {},
+            "metadata": {},
+        },
+    )
+    monkeypatch.setattr(backtest_routes, "_catalog", lambda: catalog)
+
+    regime = {
+        "enabled": True,
+        "detector": {
+            "detector_type": "volatility_threshold",
+            "lookback": 20,
+            "threshold": 0.1,
+            "feature_column": "return",
+        },
+        "allocation": {
+            "switching_type": "state_weighted_allocation",
+            "regime_weights": {"high_risk": 0.25},
+        },
+    }
+    response = backtest_routes.queue_backtest(
+        backtest_routes.BacktestQueueRequest.model_validate(
+            {
+                "name": "regime backtest",
+                "model_id": model_id,
+                "dataset_id": dataset_id,
+                "regime": regime,
+            }
+        )
+    )
+
+    body = response.model_dump(mode="json")
+    payload_regime = body["payload"]["config"]["regime"]
+    assert payload_regime["enabled"] is True
+    assert payload_regime["detector"] == regime["detector"]
+    assert payload_regime["allocation"]["regime_weights"] == {"high_risk": 0.25}
+    assert body["backtest"]["regime"] == payload_regime

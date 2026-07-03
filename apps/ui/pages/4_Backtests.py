@@ -8,6 +8,11 @@ from typing import Any
 
 import pandas as pd
 import streamlit as st
+from apps.ui.regime_helpers import (
+    backtest_regime_config,
+    parse_csv_columns,
+    parse_regime_weights,
+)
 
 from quant_platform.backtesting.schemas import (
     BacktestConfig,
@@ -16,6 +21,7 @@ from quant_platform.backtesting.schemas import (
 )
 from quant_platform.config import get_settings
 from quant_platform.data.storage.catalog import MetadataCatalog
+from quant_platform.models.schemas import RegimeDetectorType
 
 
 def _catalog() -> MetadataCatalog:
@@ -155,6 +161,48 @@ with st.form("queue_backtest"):
             format_func=lambda value: value.value,
         )
 
+    st.subheader("Regime detection (optional)")
+    regime_enabled = st.checkbox("Enable regime detection", value=False)
+    regime_cols = st.columns(5)
+    with regime_cols[0]:
+        regime_detector_type = st.selectbox(
+            "Detector type",
+            list(RegimeDetectorType),
+            format_func=lambda value: value.value,
+            disabled=not regime_enabled,
+        )
+    with regime_cols[1]:
+        regime_lookback = st.number_input(
+            "Regime lookback",
+            min_value=2,
+            value=20,
+            step=1,
+            disabled=not regime_enabled,
+        )
+    with regime_cols[2]:
+        regime_threshold = st.number_input(
+            "Regime threshold", value=0.0, step=0.01, disabled=not regime_enabled
+        )
+    with regime_cols[3]:
+        regime_feature_columns_raw = st.text_input(
+            "Regime feature columns", value="return", disabled=not regime_enabled
+        )
+    with regime_cols[4]:
+        regime_weights_raw = st.text_area(
+            "Regime-to-weight mapping",
+            value="",
+            placeholder="high_risk: 0.25",
+            disabled=not regime_enabled,
+        )
+    regime_config = backtest_regime_config(
+        enabled=regime_enabled,
+        detector_type=regime_detector_type,
+        lookback=int(regime_lookback),
+        threshold=float(regime_threshold),
+        feature_columns=parse_csv_columns(regime_feature_columns_raw),
+        regime_weights=parse_regime_weights(regime_weights_raw),
+    )
+
     config = BacktestConfig(
         name=name.strip() or "backtest",
         initial_cash=float(initial_cash),
@@ -181,6 +229,7 @@ with st.form("queue_backtest"):
         },
         exposure={"max_gross_exposure": float(max_gross_exposure)},
         holding_period={"max_bars": int(max_bars) or None},
+        regime=regime_config,
         options_expiration_handling=options_policy,
     )
     payload = {
