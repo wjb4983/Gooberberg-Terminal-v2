@@ -6,7 +6,14 @@ from collections.abc import Mapping
 from enum import StrEnum
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    TypeAdapter,
+    field_validator,
+    model_validator,
+)
 
 
 class RegimeDetectorType(StrEnum):
@@ -391,6 +398,9 @@ RegimeSwitchingConfig = (
 )
 
 
+_REGIME_CONFIG_ADAPTER = TypeAdapter(RegimeConfig)
+
+
 class ModelType(StrEnum):
     """Supported neural network model families."""
 
@@ -399,6 +409,7 @@ class ModelType(StrEnum):
     GRU = "gru"
     TEMPORAL_CNN = "temporal_cnn"
     TRANSFORMER = "transformer"
+    REGIME_DETECTOR = "regime_detector"
 
 
 class BaseModelConfig(BaseModel):
@@ -485,7 +496,7 @@ class ModelDefinition(BaseModel):
     def to_parameters(self) -> dict[str, Any]:
         """Return JSON-serializable registry parameters for this definition."""
 
-        return {
+        parameters: dict[str, Any] = {
             "layer_count": self.layer_count,
             "hidden_size": self.hidden_size,
             "dropout": self.dropout,
@@ -493,11 +504,29 @@ class ModelDefinition(BaseModel):
             "sequence_length": self.sequence_length,
             "input_size": self.input_size,
             "output_size": self.output_size,
-            "config": self.to_model_config_dict(),
         }
+        if self.model_type == ModelType.REGIME_DETECTOR:
+            parameters["regime"] = self.to_regime_config_dict()
+        else:
+            parameters["config"] = self.to_model_config_dict()
+        return parameters
+
+    def to_regime_config_dict(self) -> dict[str, Any]:
+        """Return the validated regime detector config stored in metadata["regime"]."""
+
+        raw_config = self.metadata.get("regime")
+        if not isinstance(raw_config, Mapping):
+            msg = "metadata['regime'] must contain a regime detector config mapping"
+            raise ValueError(msg)
+        config = _REGIME_CONFIG_ADAPTER.validate_python(dict(raw_config))
+        return config.model_dump(mode="json")
 
     def to_model_config_dict(self) -> dict[str, Any]:
         """Return a best-effort runtime model config matching existing builders."""
+
+        if self.model_type == ModelType.REGIME_DETECTOR:
+            msg = "regime detector definitions do not have neural model configs"
+            raise ValueError(msg)
 
         base = {
             "model_type": self.model_type.value,
