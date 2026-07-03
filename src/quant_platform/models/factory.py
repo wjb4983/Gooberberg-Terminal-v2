@@ -8,13 +8,19 @@ from quant_platform.models.mlp import MLP
 from quant_platform.models.recurrent import RecurrentModel
 from quant_platform.models.regime import (
     BaseRegimeDetector,
+    ChangePointRegimeDetector,
+    ClusteringRegimeDetector,
+    PCARegimeDetector,
     RollingZScoreRegimeDetector,
     ThresholdRegimeDetector,
 )
 from quant_platform.models.schemas import (
+    ChangePointRegimeConfig,
+    ClusteringRegimeConfig,
     MLPConfig,
     ModelConfig,
     ModelType,
+    PCARegimeConfig,
     RecurrentConfig,
     RegimeConfig,
     RegimeDetectorType,
@@ -109,6 +115,12 @@ def build_regime_detector(config: RegimeConfig) -> BaseRegimeDetector:
             n_regimes=config.n_regimes,
             regime_column=config.regime_column,
         )
+    if isinstance(config, ChangePointRegimeConfig):
+        return ChangePointRegimeDetector(config)
+    if isinstance(config, ClusteringRegimeConfig):
+        return ClusteringRegimeDetector(config)
+    if isinstance(config, PCARegimeConfig):
+        return PCARegimeDetector(config)
 
     msg = f"unsupported regime detector config: {type(config).__name__}"
     raise TypeError(msg)
@@ -124,6 +136,12 @@ def build_regime_detector_from_dict(
         parsed: RegimeConfig = ThresholdRegimeConfig.model_validate(config)
     elif detector_type == RegimeDetectorType.ROLLING_ZSCORE:
         parsed = RollingZScoreRegimeConfig.model_validate(config)
+    elif detector_type == RegimeDetectorType.CHANGE_POINT:
+        parsed = ChangePointRegimeConfig.model_validate(config)
+    elif detector_type == RegimeDetectorType.CLUSTERING:
+        parsed = ClusteringRegimeConfig.model_validate(config)
+    elif detector_type == RegimeDetectorType.PCA:
+        parsed = PCARegimeConfig.model_validate(config)
     else:
         msg = f"unsupported regime detector type: {detector_type}"
         raise ValueError(msg)

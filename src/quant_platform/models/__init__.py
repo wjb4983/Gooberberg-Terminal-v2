@@ -10,6 +10,9 @@ from quant_platform.models.mlp import MLP
 from quant_platform.models.recurrent import RecurrentModel
 from quant_platform.models.regime import (
     BaseRegimeDetector,
+    ChangePointRegimeDetector,
+    ClusteringRegimeDetector,
+    PCARegimeDetector,
     RegimeLabels,
     RollingZScoreRegimeDetector,
     StateWeightedAllocationModel,
@@ -19,6 +22,7 @@ from quant_platform.models.registry import ModelRegistry
 from quant_platform.models.schemas import (
     Activation,
     BaseRegimeConfig,
+    ChangePointRegimeConfig,
     ClusteringRegimeConfig,
     HMMRegimeConfig,
     MLPConfig,
@@ -42,6 +46,9 @@ from quant_platform.models.transformer import TransformerEncoderModel
 __all__ = [
     "Activation",
     "BaseRegimeDetector",
+    "ChangePointRegimeConfig",
+    "ChangePointRegimeDetector",
+    "ClusteringRegimeDetector",
     "BaseRegimeConfig",
     "ClusteringRegimeConfig",
     "HMMRegimeConfig",
@@ -52,6 +59,7 @@ __all__ = [
     "ModelRegistry",
     "ModelType",
     "PCARegimeConfig",
+    "PCARegimeDetector",
     "RecurrentConfig",
     "RecurrentModel",
     "RegimeConfig",
