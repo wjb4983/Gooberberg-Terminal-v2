@@ -1,6 +1,11 @@
 """Reusable model definitions for quant platform experiments and services."""
 
-from quant_platform.models.factory import build_model, build_model_from_dict
+from quant_platform.models.factory import (
+    build_model,
+    build_model_from_dict,
+    build_regime_detector,
+    build_regime_detector_from_dict,
+)
 from quant_platform.models.mlp import MLP
 from quant_platform.models.recurrent import RecurrentModel
 from quant_platform.models.regime import (
@@ -21,6 +26,7 @@ from quant_platform.models.schemas import (
     ModelType,
     PCARegimeConfig,
     RecurrentConfig,
+    RegimeConfig,
     RegimeDetectorType,
     RegimeSwitchingType,
     RollingZScoreRegimeConfig,
@@ -47,6 +53,7 @@ __all__ = [
     "PCARegimeConfig",
     "RecurrentConfig",
     "RecurrentModel",
+    "RegimeConfig",
     "RegimeDetectorType",
     "RegimeLabels",
     "RegimeSwitchingType",
@@ -61,4 +68,6 @@ __all__ = [
     "TransformerEncoderModel",
     "build_model",
     "build_model_from_dict",
+    "build_regime_detector",
+    "build_regime_detector_from_dict",
 ]

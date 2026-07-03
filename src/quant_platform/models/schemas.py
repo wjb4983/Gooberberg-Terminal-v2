@@ -197,6 +197,15 @@ class HMMRegimeConfig(BaseRegimeConfig):
         return self
 
 
+RegimeConfig = (
+    ThresholdRegimeConfig
+    | RollingZScoreRegimeConfig
+    | ClusteringRegimeConfig
+    | PCARegimeConfig
+    | HMMRegimeConfig
+)
+
+
 class StateWeightedAllocationConfig(BaseRegimeConfig):
     """Configuration for deterministic state-weighted allocation switching."""
 

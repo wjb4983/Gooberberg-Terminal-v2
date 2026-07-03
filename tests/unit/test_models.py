@@ -16,11 +16,14 @@ from quant_platform.models import (
     PCARegimeConfig,
     RecurrentConfig,
     RegimeDetectorType,
+    RollingZScoreRegimeConfig,
     StateWeightedAllocationConfig,
     TemporalCNNConfig,
     ThresholdRegimeConfig,
     TransformerConfig,
     build_model,
+    build_regime_detector,
+    build_regime_detector_from_dict,
 )
 
 
@@ -232,3 +235,53 @@ def test_rolling_zscore_regime_detector_emits_deterministic_labels() -> None:
 
     assert regimes.iloc[3] == 1
     assert regimes.iloc[4] == 2
+
+
+def test_build_regime_detector_instantiates_threshold_config() -> None:
+    detector = build_regime_detector(
+        ThresholdRegimeConfig(
+            detector_type=RegimeDetectorType.DRAWDOWN_THRESHOLD,
+            feature_column="close",
+            lookback=5,
+            threshold=-0.1,
+            direction="below",
+        )
+    )
+
+    assert detector.rule == "drawdown"
+    assert detector.price_column == "close"
+    assert detector.regime_column == "regime"
+
+
+def test_build_regime_detector_from_dict_instantiates_zscore_config() -> None:
+    detector = build_regime_detector_from_dict(
+        {
+            "detector_type": "rolling_zscore",
+            "feature_column": "spread",
+            "lookback": 10,
+            "entry_zscore": 1.5,
+            "exit_zscore": 0.25,
+            "n_regimes": 3,
+            "regime_column": "market_regime",
+        }
+    )
+
+    assert detector.feature_column == "spread"
+    assert detector.n_regimes == 3
+    assert detector.regime_column == "market_regime"
+
+
+def test_build_regime_detector_from_dict_rejects_unsupported_type() -> None:
+    with pytest.raises(ValueError, match="unsupported regime detector type: hmm"):
+        build_regime_detector_from_dict({"detector_type": "hmm"})
+
+
+def test_build_regime_detector_rejects_unsupported_config() -> None:
+    with pytest.raises(TypeError, match="unsupported regime detector config"):
+        build_regime_detector(object())  # type: ignore[arg-type]
+
+    detector = build_regime_detector(
+        RollingZScoreRegimeConfig(feature_column="return", lookback=3)
+    )
+
+    assert detector.lookback == 3
