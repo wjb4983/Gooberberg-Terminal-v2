@@ -35,6 +35,8 @@ def default_model_config(config: TrainingConfig) -> dict[str, Any]:
     """Build a small model config compatible with the selected model type."""
 
     input_dim = len(config.feature_set)
+    if config.regime.enabled and config.regime.include_regime_feature:
+        input_dim += 1
     base: dict[str, Any] = {
         "model_type": config.model_type.value,
         "input_dim": input_dim,
@@ -93,6 +95,7 @@ def run_training(
         "task_type": training_config.task_type.value,
         "walk_forward_enabled": training_config.walk_forward.enabled,
         "early_stopping_enabled": training_config.early_stopping.enabled,
+        "regime": training_config.regime.model_dump(mode="json"),
     }
     if training_config.experiment_id is None:
         experiment_id = registry.create_experiment(
