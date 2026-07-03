@@ -3,6 +3,12 @@
 from quant_platform.models.factory import build_model, build_model_from_dict
 from quant_platform.models.mlp import MLP
 from quant_platform.models.recurrent import RecurrentModel
+from quant_platform.models.regime import (
+    BaseRegimeDetector,
+    RegimeLabels,
+    RollingZScoreRegimeDetector,
+    ThresholdRegimeDetector,
+)
 from quant_platform.models.registry import ModelRegistry
 from quant_platform.models.schemas import (
     Activation,
@@ -28,6 +34,7 @@ from quant_platform.models.transformer import TransformerEncoderModel
 
 __all__ = [
     "Activation",
+    "BaseRegimeDetector",
     "BaseRegimeConfig",
     "ClusteringRegimeConfig",
     "HMMRegimeConfig",
@@ -41,12 +48,15 @@ __all__ = [
     "RecurrentConfig",
     "RecurrentModel",
     "RegimeDetectorType",
+    "RegimeLabels",
     "RegimeSwitchingType",
     "RollingZScoreRegimeConfig",
+    "RollingZScoreRegimeDetector",
     "StateWeightedAllocationConfig",
     "TemporalCNN",
     "TemporalCNNConfig",
     "ThresholdRegimeConfig",
+    "ThresholdRegimeDetector",
     "TransformerConfig",
     "TransformerEncoderModel",
     "build_model",
