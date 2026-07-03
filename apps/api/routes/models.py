@@ -26,6 +26,7 @@ class ModelCreateRequest(BaseModel):
 
     definition: ModelDefinition
     overwrite: bool = True
+    regime: dict[str, Any] | None = None
 
 
 class ModelResponse(BaseModel):
@@ -37,6 +38,7 @@ class ModelResponse(BaseModel):
     model_type: ModelType
     parameters: dict[str, Any] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
+    regime: dict[str, Any] | None = None
     created_at: datetime | None = None
 
 
@@ -78,6 +80,7 @@ def _model_response(row: Any) -> ModelResponse:
         model_type=ModelType(mapping["model_type"]),
         parameters=mapping.get("parameters") or {},
         metadata=mapping.get("metadata") or {},
+        regime=(mapping.get("metadata") or {}).get("regime"),
         created_at=mapping.get("created_at"),
     )
 
@@ -145,8 +148,13 @@ def list_models() -> ModelListResponse:
 def create_model(request: ModelCreateRequest) -> ModelResponse:
     """Register a reusable model definition."""
 
+    definition = request.definition
+    if request.regime is not None:
+        definition = definition.model_copy(
+            update={"metadata": {**definition.metadata, "regime": request.regime}}
+        )
     registry = ModelRegistry(get_settings().catalog_db_path)
-    model_id = registry.register(request.definition, overwrite=request.overwrite)
+    model_id = registry.register(definition, overwrite=request.overwrite)
     row = _get_model_row(registry.catalog, model_id)
     return _model_response(row)
 
