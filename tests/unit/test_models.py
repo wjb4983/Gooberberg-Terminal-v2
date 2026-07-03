@@ -132,6 +132,47 @@ def test_model_registry_registers_definition(tmp_path) -> None:
     assert saved.hidden_size == 32
 
 
+def test_model_definition_round_trips_regime_metadata(tmp_path) -> None:
+    registry = ModelRegistry(tmp_path / "metadata.sqlite")
+    definition = ModelDefinition(
+        name="baseline_volatility_regime",
+        model_type=ModelType.REGIME_DETECTOR,
+        metadata={
+            "regime": {
+                "detector_type": "volatility_threshold",
+                "feature_column": "return",
+                "lookback": 21,
+                "threshold": 0.02,
+                "direction": "above",
+                "n_regimes": 2,
+                "regime_column": "market_regime",
+            },
+            "owner": "research",
+        },
+    )
+
+    model_id = registry.register(definition)
+    saved = registry.get("baseline_volatility_regime")
+
+    assert model_id > 0
+    assert saved is not None
+    assert saved.model_type == ModelType.REGIME_DETECTOR
+    assert saved.metadata["owner"] == "research"
+    assert saved.to_regime_config_dict() == {
+        "detector_type": "volatility_threshold",
+        "lookback": 21,
+        "feature_column": "return",
+        "threshold": 0.02,
+        "direction": "above",
+        "lower_threshold": None,
+        "upper_threshold": None,
+        "n_regimes": 2,
+        "regime_column": "market_regime",
+    }
+    assert saved.to_parameters()["regime"] == saved.to_regime_config_dict()
+    with pytest.raises(ValueError, match="regime detector definitions"):
+        saved.to_model_config_dict()
+
 def test_regime_config_defaults_are_conservative() -> None:
     threshold = ThresholdRegimeConfig()
     clustering = ClusteringRegimeConfig()
