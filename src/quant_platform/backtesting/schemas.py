@@ -80,6 +80,17 @@ class HoldingPeriodConfig(BaseModel):
     max_bars: int | None = Field(default=None, gt=0)
 
 
+class RegimeBacktestConfig(BaseModel):
+    """Optional regime-detection settings for backtests."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    detector: dict[str, Any] | None = None
+    regime_column: str = "regime"
+    signal_adjustment_column: str | None = None
+
+
 class BacktestConfig(BaseModel):
     """Configuration for the first functional event-driven backtest pass."""
 
@@ -99,6 +110,7 @@ class BacktestConfig(BaseModel):
     position_sizing: PositionSizingConfig = Field(default_factory=PositionSizingConfig)
     exposure: ExposureConfig = Field(default_factory=ExposureConfig)
     holding_period: HoldingPeriodConfig = Field(default_factory=HoldingPeriodConfig)
+    regime: RegimeBacktestConfig = Field(default_factory=RegimeBacktestConfig)
     options_expiration_handling: OptionsExpirationHandling = (
         OptionsExpirationHandling.IGNORE
     )
