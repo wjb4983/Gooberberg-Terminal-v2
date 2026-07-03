@@ -272,6 +272,125 @@ class StateWeightedAllocationConfig(BaseRegimeConfig):
         return self
 
 
+class MarkovSwitchingConfig(BaseRegimeConfig):
+    """Configuration for optional statsmodels-backed Markov switching models."""
+
+    switching_type: Literal[RegimeSwitchingType.MARKOV_SWITCHING] = (
+        RegimeSwitchingType.MARKOV_SWITCHING
+    )
+    endog_column: str = "return"
+    exog_columns: tuple[str, ...] = Field(default=(), min_length=0)
+    n_regimes: int = Field(default=2, gt=1)
+    trend: Literal["n", "c", "t", "ct"] = "c"
+    switching_variance: bool = True
+    max_iter: int = Field(default=100, gt=0)
+
+    @model_validator(mode="after")
+    def _validate_markov_switching_config(self) -> MarkovSwitchingConfig:
+        if not self.endog_column or not self.endog_column.strip():
+            msg = "endog_column must be a non-empty column name"
+            raise ValueError(msg)
+        if self.endog_column == self.regime_column:
+            msg = "endog_column must not match regime_column"
+            raise ValueError(msg)
+        self._validate_feature_columns(self.exog_columns, self.regime_column)
+        if self.endog_column in self.exog_columns:
+            msg = "exog_columns must not include endog_column"
+            raise ValueError(msg)
+        return self
+
+
+class SwitchingLinearConfig(BaseRegimeConfig):
+    """Configuration for deterministic per-regime linear heads."""
+
+    switching_type: Literal[RegimeSwitchingType.SWITCHING_LINEAR] = (
+        RegimeSwitchingType.SWITCHING_LINEAR
+    )
+    feature_columns: tuple[str, ...] = Field(default=("return",), min_length=1)
+    target_column: str = "target"
+    prediction_column: str = "prediction"
+    n_regimes: int = Field(default=2, gt=1)
+    fit_intercept: bool = True
+    default_regime: str | None = None
+
+    @model_validator(mode="after")
+    def _validate_switching_linear_config(self) -> SwitchingLinearConfig:
+        self._validate_feature_columns(self.feature_columns, self.regime_column)
+        for column_name, value in {
+            "target_column": self.target_column,
+            "prediction_column": self.prediction_column,
+        }.items():
+            if not value or not value.strip():
+                msg = f"{column_name} must be a non-empty column name"
+                raise ValueError(msg)
+            if value == self.regime_column:
+                msg = f"{column_name} must not match regime_column"
+                raise ValueError(msg)
+        if self.target_column in self.feature_columns:
+            msg = "feature_columns must not include target_column"
+            raise ValueError(msg)
+        return self
+
+
+class StateDependentRiskConfig(BaseRegimeConfig):
+    """Configuration for deterministic state-dependent risk controls."""
+
+    switching_type: Literal[RegimeSwitchingType.STATE_DEPENDENT_RISK] = (
+        RegimeSwitchingType.STATE_DEPENDENT_RISK
+    )
+    signal_column: str = "signal"
+    adjusted_signal_column: str = "risk_adjusted_signal"
+    volatility_column: str = "volatility"
+    return_column: str = "return"
+    n_regimes: int = Field(default=2, gt=1)
+    volatility_target_by_regime: dict[str, float] = Field(default_factory=dict)
+    max_leverage_by_regime: dict[str, float] = Field(default_factory=dict)
+    stop_loss_multiplier_by_regime: dict[str, float] = Field(default_factory=dict)
+    cash_allocation_by_regime: dict[str, float] = Field(default_factory=dict)
+    default_volatility_target: float | None = Field(default=None, gt=0.0)
+    default_max_leverage: float = Field(default=1.0, ge=0.0)
+    default_stop_loss_multiplier: float | None = Field(default=None, gt=0.0)
+    default_cash_allocation: float = Field(default=0.0, ge=0.0, le=1.0)
+
+    @model_validator(mode="after")
+    def _validate_state_dependent_risk_config(self) -> StateDependentRiskConfig:
+        for column_name, value in {
+            "signal_column": self.signal_column,
+            "adjusted_signal_column": self.adjusted_signal_column,
+            "volatility_column": self.volatility_column,
+            "return_column": self.return_column,
+        }.items():
+            if not value or not value.strip():
+                msg = f"{column_name} must be a non-empty column name"
+                raise ValueError(msg)
+            if value == self.regime_column:
+                msg = f"{column_name} must not match regime_column"
+                raise ValueError(msg)
+        values = [
+            *self.volatility_target_by_regime.values(),
+            *self.max_leverage_by_regime.values(),
+            *self.stop_loss_multiplier_by_regime.values(),
+        ]
+        if any(value < 0.0 for value in values):
+            msg = "risk multipliers and targets must be non-negative"
+            raise ValueError(msg)
+        if any(
+            allocation < 0.0 or allocation > 1.0
+            for allocation in self.cash_allocation_by_regime.values()
+        ):
+            msg = "cash allocations must be between 0 and 1"
+            raise ValueError(msg)
+        return self
+
+
+RegimeSwitchingConfig = (
+    StateWeightedAllocationConfig
+    | MarkovSwitchingConfig
+    | SwitchingLinearConfig
+    | StateDependentRiskConfig
+)
+
+
 class ModelType(StrEnum):
     """Supported neural network model families."""
 
