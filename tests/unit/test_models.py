@@ -2,15 +2,22 @@
 
 from __future__ import annotations
 
+import pytest
 import torch
+from pydantic import ValidationError
 
 from quant_platform.models import (
+    ClusteringRegimeConfig,
     MLPConfig,
     ModelDefinition,
     ModelRegistry,
     ModelType,
+    PCARegimeConfig,
     RecurrentConfig,
+    RegimeDetectorType,
+    StateWeightedAllocationConfig,
     TemporalCNNConfig,
+    ThresholdRegimeConfig,
     TransformerConfig,
     build_model,
 )
@@ -119,3 +126,43 @@ def test_model_registry_registers_definition(tmp_path) -> None:
     assert saved is not None
     assert saved.name == "baseline_mlp"
     assert saved.hidden_size == 32
+
+
+def test_regime_config_defaults_are_conservative() -> None:
+    threshold = ThresholdRegimeConfig()
+    clustering = ClusteringRegimeConfig()
+
+    assert threshold.detector_type == RegimeDetectorType.VOLATILITY_THRESHOLD
+    assert threshold.lookback == 20
+    assert threshold.regime_column == "regime"
+    assert threshold.n_regimes == 2
+    assert clustering.feature_columns == ("return",)
+
+
+def test_threshold_regime_config_validates_direction_bounds() -> None:
+    with pytest.raises(ValidationError, match="lower_threshold and upper_threshold"):
+        ThresholdRegimeConfig(direction="outside")
+
+    config = ThresholdRegimeConfig(
+        direction="outside",
+        lower_threshold=-1.0,
+        upper_threshold=1.0,
+    )
+
+    assert config.direction == "outside"
+
+
+def test_regime_configs_reject_incompatible_column_names() -> None:
+    with pytest.raises(ValidationError, match="feature_column must not match"):
+        ThresholdRegimeConfig(feature_column="regime")
+
+    with pytest.raises(ValidationError, match="feature_columns must be unique"):
+        ClusteringRegimeConfig(feature_columns=("return", "return"))
+
+
+def test_regime_configs_validate_n_regimes_compatibility() -> None:
+    with pytest.raises(ValidationError, match="less than or equal to lookback"):
+        PCARegimeConfig(lookback=2, n_regimes=3)
+
+    with pytest.raises(ValidationError, match="state_weights length"):
+        StateWeightedAllocationConfig(n_regimes=3)
