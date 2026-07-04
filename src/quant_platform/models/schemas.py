@@ -212,6 +212,7 @@ class HMMRegimeConfig(BaseRegimeConfig):
 
     detector_type: Literal[RegimeDetectorType.HMM] = RegimeDetectorType.HMM
     n_regimes: int = Field(default=2, gt=1)
+    window_size: int = Field(default=20, gt=1)
     feature_columns: tuple[str, ...] = Field(default=("return",), min_length=1)
     covariance_type: Literal["diag", "full", "spherical", "tied"] = "diag"
     max_iter: int = Field(default=100, gt=0)
