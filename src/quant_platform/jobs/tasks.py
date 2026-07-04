@@ -17,6 +17,7 @@ from quant_platform.data.providers import (
     MassiveMarketDataProvider,
 )
 from quant_platform.data.storage.catalog import MetadataCatalog, experiments, jobs
+from quant_platform.experiments.registry import ExperimentRegistry
 from quant_platform.training.runner import run_training
 from quant_platform.training.schemas import TrainingConfig
 
@@ -300,7 +301,10 @@ def _handle_training(payload: JsonObject) -> JsonObject:
         started_at=started_at,
     )
     try:
-        result = run_training(_training_config_from_payload(payload))
+        result = run_training(
+            _training_config_from_payload(payload),
+            registry=ExperimentRegistry(get_settings().catalog_db_path),
+        )
     except Exception as exc:
         details = _exception_details(exc)
         failed_metadata = {

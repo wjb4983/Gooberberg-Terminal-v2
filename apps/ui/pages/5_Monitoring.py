@@ -21,7 +21,7 @@ def _summary() -> dict[str, Any]:
 
 def _dataframe_or_info(rows: list[dict[str, Any]], empty_message: str) -> None:
     if rows:
-        st.dataframe(pd.DataFrame(rows), use_container_width=True)
+        st.dataframe(pd.DataFrame(rows), width="stretch")
     else:
         st.info(empty_message)
 
@@ -98,13 +98,13 @@ def _render_job_group(title: str, rows: list[dict[str, Any]]) -> None:
         }
         for row in rows
     ]
-    st.dataframe(pd.DataFrame(table_rows), use_container_width=True)
+    st.dataframe(pd.DataFrame(table_rows), width="stretch")
     for row in rows:
         with st.expander(f"Job #{row['id']} logs and payload", expanded=False):
             st.json(row.get("payload") or {})
             logs = row.get("logs") or []
             if logs:
-                st.dataframe(pd.DataFrame(logs), use_container_width=True)
+                st.dataframe(pd.DataFrame(logs), width="stretch")
             else:
                 st.info("No logs have been recorded for this job yet.")
 

@@ -322,6 +322,6 @@ if save_clicked:
 st.subheader("Model definition table")
 rows = _definition_rows()
 if rows:
-    st.dataframe(pd.DataFrame(rows), use_container_width=True)
+    st.dataframe(pd.DataFrame(rows), width="stretch")
 else:
     st.info("No model definitions have been saved yet.")
