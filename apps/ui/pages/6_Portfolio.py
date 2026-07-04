@@ -99,7 +99,7 @@ def _render_allocations(summary: dict[str, Any]) -> None:
             st.bar_chart(df["weight"])
             st.dataframe(
                 _format_allocation_table(pd.DataFrame(symbol_rows)),
-                use_container_width=True,
+                width="stretch",
             )
         else:
             st.info("No symbol allocation is available yet.")
@@ -110,7 +110,7 @@ def _render_allocations(summary: dict[str, Any]) -> None:
             st.bar_chart(df["weight"])
             st.dataframe(
                 _format_allocation_table(pd.DataFrame(asset_rows)),
-                use_container_width=True,
+                width="stretch",
             )
         else:
             st.info("No asset-type allocation is available yet.")
@@ -158,7 +158,7 @@ def _render_holdings(rows: list[dict[str, Any]]) -> None:
             table[column] = table[column].map(_currency)
     if "unrealized_pnl_percent" in table:
         table["unrealized_pnl_percent"] = table["unrealized_pnl_percent"].map(_percent)
-    st.dataframe(table, use_container_width=True)
+    st.dataframe(table, width="stretch")
 
 
 def _render_lookback_metrics(summary: dict[str, Any], selected_lookback: str) -> None:
@@ -177,7 +177,7 @@ def _render_lookback_metrics(summary: dict[str, Any], selected_lookback: str) ->
         "beta": selected.get("beta"),
         "max_drawdown": _percent(selected.get("max_drawdown")),
     }
-    st.dataframe(pd.DataFrame([row]), use_container_width=True)
+    st.dataframe(pd.DataFrame([row]), width="stretch")
 
 
 st.set_page_config(page_title="Portfolio", page_icon="💼", layout="wide")

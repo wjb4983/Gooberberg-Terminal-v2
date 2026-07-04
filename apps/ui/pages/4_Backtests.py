@@ -275,7 +275,7 @@ if backtests:
         pd.DataFrame(backtests)[
             ["id", "name", "status", "start_ts", "end_ts", "created_at"]
         ],
-        use_container_width=True,
+        width="stretch",
     )
     selected = st.selectbox(
         "Inspect backtest",
@@ -307,13 +307,13 @@ if backtests:
             else equity_curve
         )
         st.line_chart(chart_data[["equity"]] if "equity" in chart_data else chart_data)
-        st.dataframe(equity_curve, use_container_width=True)
+        st.dataframe(equity_curve, width="stretch")
     else:
         st.info("No equity curve artifact is available yet.")
 
     st.subheader("Trade log")
     if trades is not None and not trades.empty:
-        st.dataframe(trades, use_container_width=True)
+        st.dataframe(trades, width="stretch")
     else:
         st.info("No trade log artifact is available yet.")
 else:

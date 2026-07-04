@@ -57,8 +57,8 @@ def test_run_training_job_updates_job_and_experiment_on_success(monkeypatch, tmp
     experiment_id, job_id = _insert_training_rows(catalog)
     calls = []
 
-    def fake_run_training(config):
-        calls.append(config)
+    def fake_run_training(config, **kwargs):
+        calls.append((config, kwargs))
         manifest = SimpleNamespace(files={"model": "artifacts/model.pt"})
         return SimpleNamespace(
             artifact_dir=tmp_path / "artifacts" / "run-1",
@@ -87,8 +87,10 @@ def test_run_training_job_updates_job_and_experiment_on_success(monkeypatch, tmp
         },
     )
 
-    assert calls[0].experiment_id == experiment_id
-    assert calls[0].date_split.train_start.isoformat() == "2024-01-01"
+    config, kwargs = calls[0]
+    assert config.experiment_id == experiment_id
+    assert config.date_split.train_start.isoformat() == "2024-01-01"
+    assert kwargs["registry"].catalog.path == tmp_path / "metadata.sqlite"
     assert result["experiment_id"] == experiment_id
     job = _row(catalog, "jobs", job_id)
     experiment = _row(catalog, "experiments", experiment_id)
@@ -112,7 +114,7 @@ def test_run_training_job_updates_job_and_experiment_on_failure(monkeypatch, tmp
     catalog = _configure_catalog(monkeypatch, tmp_path)
     experiment_id, job_id = _insert_training_rows(catalog)
 
-    def fake_run_training(config):
+    def fake_run_training(config, **kwargs):
         raise RuntimeError("training exploded with a concise error")
 
     monkeypatch.setattr(tasks, "run_training", fake_run_training)
@@ -185,7 +187,7 @@ def test_training_job_failure_logs_verbose_structured_error(monkeypatch, tmp_pat
     catalog = _configure_catalog(monkeypatch, tmp_path)
     experiment_id, job_id = _insert_training_rows(catalog)
 
-    def fake_run_training(config):
+    def fake_run_training(config, **kwargs):
         raise RuntimeError("boom")
 
     monkeypatch.setattr(tasks, "run_training", fake_run_training)

@@ -219,7 +219,7 @@ if experiments:
                 "completed_at",
             ]
         ],
-        use_container_width=True,
+        width="stretch",
     )
     selected = st.selectbox(
         "Inspect experiment",
@@ -240,7 +240,7 @@ if experiments:
     metric_rows = _metrics(int(selected["id"]))
     if metric_rows:
         st.subheader("Metrics")
-        st.dataframe(pd.DataFrame(metric_rows), use_container_width=True)
+        st.dataframe(pd.DataFrame(metric_rows), width="stretch")
     else:
         st.info("No metrics have been logged for this experiment yet.")
     if artifact_links:

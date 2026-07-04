@@ -105,7 +105,7 @@ if checks_passed(checks):
         st.subheader("Missing data plan")
         st.metric("Requested partitions", preview.requested_count)
         st.metric("Missing partitions", preview.missing_count)
-        st.dataframe(pd.DataFrame(preview.rows), use_container_width=True)
+        st.dataframe(pd.DataFrame(preview.rows), width="stretch")
 
     if queue_clicked:
         queued = queue_ingestion(definition)
@@ -118,4 +118,4 @@ elif preview_clicked or save_clicked or queue_clicked:
     )
 
 st.subheader("Job status")
-st.dataframe(pd.DataFrame(job_status_rows()), use_container_width=True)
+st.dataframe(pd.DataFrame(job_status_rows()), width="stretch")
