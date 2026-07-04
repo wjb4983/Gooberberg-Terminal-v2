@@ -6,11 +6,17 @@ from typing import Any
 
 import pandas as pd
 import streamlit as st
+
 from apps.ui.regime_helpers import (
     model_regime_config,
     model_regime_switching_config,
     parse_csv_columns,
     parse_regime_weights,
+)
+from apps.ui.workflow_context import (
+    infer_workflow_intent,
+    normalize_workflow_context,
+    store_workflow_context,
 )
 
 from quant_platform.config import get_settings
@@ -297,6 +303,17 @@ with st.form("model_definition"):
         metadata["regime"] = regime_config
     if regime_switching_config is not None:
         metadata["regime_switching"] = regime_switching_config
+    workflow_intent = infer_workflow_intent(
+        model_type=model_type.value, model_metadata=metadata
+    )
+    store_workflow_context(
+        st.session_state,
+        normalize_workflow_context(
+            model_type=model_type.value,
+            model_metadata=metadata,
+            workflow_intent=workflow_intent,
+        ),
+    )
 
     definition = ModelDefinition(
         name=name.strip(),
@@ -317,6 +334,7 @@ with st.form("model_definition"):
 
 if save_clicked:
     model_id = _registry().register(definition)
+    st.session_state["workflow_active_model_id"] = model_id
     st.success(f"Saved model definition #{model_id}.")
 
 st.subheader("Model definition table")

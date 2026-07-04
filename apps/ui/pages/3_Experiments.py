@@ -8,6 +8,15 @@ from typing import Any
 import pandas as pd
 import streamlit as st
 
+from apps.ui.workflow_context import (
+    ACTIVE_DATASET_ID_KEY,
+    ACTIVE_MODEL_ID_KEY,
+    context_from_dataset_row,
+    context_from_model_row,
+    merge_workflow_context,
+    store_workflow_context,
+)
+
 from quant_platform.config import get_settings
 from quant_platform.data.storage.catalog import MetadataCatalog, experiment_metrics
 from quant_platform.experiments.queueing import (
@@ -40,6 +49,14 @@ def _model_label(row: dict[str, Any]) -> str:
     version = row.get("version", "1")
     model_type = row.get("model_type")
     return f"#{row['id']} · {row['name']} v{version} · {model_type}"
+
+
+def _active_index(rows: list[dict[str, Any]], session_key: str) -> int:
+    active_id = st.session_state.get(session_key)
+    for index, row in enumerate(rows):
+        if row.get("id") == active_id:
+            return index
+    return 0
 
 
 def _metrics(experiment_id: int) -> list[dict[str, Any]]:
@@ -77,6 +94,7 @@ with st.form("queue_experiment"):
             st.selectbox(
                 "Dataset",
                 datasets,
+                index=_active_index(datasets, ACTIVE_DATASET_ID_KEY),
                 format_func=_label,
                 disabled=not datasets,
             )
@@ -102,6 +120,7 @@ with st.form("queue_experiment"):
             st.selectbox(
                 "Model definition",
                 models,
+                index=_active_index(models, ACTIVE_MODEL_ID_KEY),
                 format_func=_model_label,
                 disabled=not models,
             )
@@ -155,6 +174,14 @@ with st.form("queue_experiment"):
 
     payload: dict[str, Any] = {}
     if dataset is not None and model is not None:
+        store_workflow_context(
+            st.session_state,
+            merge_workflow_context(
+                context_from_dataset_row(dataset),
+                context_from_model_row(model),
+            ),
+        )
+        st.session_state[ACTIVE_MODEL_ID_KEY] = model["id"]
         payload = build_training_experiment_payload(
             experiment_name=name,
             dataset=dataset,
