@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import traceback
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any
@@ -92,11 +93,17 @@ def _run_with_metadata(
     try:
         result = handler({**payload, "catalog_job_id": catalog_job_id})
     except Exception as exc:
-        _append_job_log(catalog_job_id, f"Job failed: {exc}", level="error")
+        details = _exception_details(exc)
+        _append_job_log(
+            catalog_job_id,
+            details["message"],
+            level="error",
+            metadata=details,
+        )
         _update_job(
             catalog_job_id,
             status=JobStatus.FAILED,
-            error=str(exc),
+            error=details["summary"],
             completed_at=_utcnow(),
         )
         raise
@@ -108,6 +115,19 @@ def _run_with_metadata(
         completed_at=_utcnow(),
     )
     return result
+
+
+def _exception_details(exc: Exception) -> dict[str, Any]:
+    """Return descriptive, structured exception details for job logs."""
+
+    exc_type = type(exc).__name__
+    summary = str(exc) or exc_type
+    return {
+        "exception_type": exc_type,
+        "summary": summary,
+        "message": f"Job failed with {exc_type}: {summary}",
+        "traceback": traceback.format_exc(),
+    }
 
 
 def _provider_from_payload(payload: Mapping[str, Any]) -> Any:
@@ -210,11 +230,41 @@ def _training_config_from_payload(payload: Mapping[str, Any]) -> TrainingConfig:
     training = config_payload.pop("training", None)
     if isinstance(training, Mapping):
         config_payload.update(dict(training))
+    model_metadata = dict(config_payload.pop("metadata", {}) or {})
+    if not config_payload.get("feature_set") and config_payload.get("model_type") in {
+        "regime_detector",
+        "regime_switching",
+    }:
+        regime_metadata = model_metadata.get("regime") or model_metadata.get(
+            "regime_switching"
+        )
+        if regime_metadata:
+            detector_payload = (
+                {"regime_switching": regime_metadata}
+                if config_payload.get("model_type") == "regime_switching"
+                else regime_metadata
+            )
+            config_payload.setdefault(
+                "regime", {"enabled": True, "detector": detector_payload}
+            )
     allowed_fields = set(TrainingConfig.model_fields)
     config_payload = {
         key: value for key, value in config_payload.items() if key in allowed_fields
     }
-    return TrainingConfig.model_validate(config_payload)
+    try:
+        return TrainingConfig.model_validate(config_payload)
+    except Exception as exc:
+        raise ValueError(
+            "Unable to build TrainingConfig from queued payload. "
+            f"model_type={config_payload.get('model_type')!r}, "
+            f"task_type={config_payload.get('task_type')!r}, "
+            f"feature_set={config_payload.get('feature_set')!r}. "
+            "For neural models, select a feature set with at least one feature. "
+            "For regime_detector/regime_switching models, provide regime metadata "
+            "with detector_type or switching_type so training can infer the "
+            "intended columns. "
+            f"Original validation error: {exc}"
+        ) from exc
 
 
 def _artifact_links(result: Any) -> dict[str, str]:
@@ -252,9 +302,12 @@ def _handle_training(payload: JsonObject) -> JsonObject:
     try:
         result = run_training(_training_config_from_payload(payload))
     except Exception as exc:
+        details = _exception_details(exc)
         failed_metadata = {
             **_experiment_metadata(_catalog(), experiment_id),
-            "error": str(exc)[:500],
+            "error": details["summary"][:1000],
+            "error_type": details["exception_type"],
+            "error_details": details["message"],
         }
         _update_experiment(
             experiment_id,

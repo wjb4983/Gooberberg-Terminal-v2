@@ -146,8 +146,15 @@ class TrainingConfig(BaseModel):
 
     @model_validator(mode="after")
     def _validate_choices(self) -> TrainingConfig:
-        if not self.feature_set:
-            raise ValueError("feature_set must include at least one feature")
+        if not self.feature_set and self.model_type not in {
+            ModelType.REGIME_DETECTOR,
+            ModelType.REGIME_SWITCHING,
+        }:
+            raise ValueError(
+                "feature_set must include at least one feature for neural-network "
+                "training. Regime detector/switching training may omit feature_set "
+                "when detector or switching configs declare their intended columns."
+            )
         if (
             self.task_type == TaskType.BINARY_CLASSIFICATION
             and self.loss_function != LossName.BCE_WITH_LOGITS

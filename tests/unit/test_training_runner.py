@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import date
 
 from quant_platform.experiments.registry import ExperimentRegistry
+from quant_platform.models.schemas import ModelType
 from quant_platform.training.runner import default_model_config, run_training
 from quant_platform.training.schemas import (
     DateSplitConfig,
@@ -96,3 +97,69 @@ def test_regime_feature_only_changes_model_config_when_enabled() -> None:
     assert default_model_config(enabled)["input_dim"] == (
         (len(enabled.feature_set) + 1) * enabled.sequence_length
     )
+
+
+def test_run_training_supports_regime_detector_without_feature_set(tmp_path):
+    """Regime detector training should infer intended columns from config."""
+
+    registry = ExperimentRegistry(tmp_path / "metadata.sqlite")
+    result = run_training(
+        TrainingConfig(
+            experiment_name="regime-detector-training",
+            model_type=ModelType.REGIME_DETECTOR,
+            feature_set=[],
+            regime=RegimeTrainingConfig(
+                enabled=True,
+                detector={
+                    "detector_type": "rolling_zscore",
+                    "feature_column": "return",
+                },
+            ),
+            date_split=DateSplitConfig(
+                train_start=date(2024, 1, 1),
+                train_end=date(2024, 1, 4),
+                validation_start=date(2024, 1, 5),
+                validation_end=date(2024, 1, 6),
+            ),
+            artifact_dir=tmp_path / "artifacts",
+        ),
+        registry=registry,
+    )
+
+    assert result.metrics["rows_labeled"] > 0
+    assert result.metrics["regime_count"] >= 1
+    assert result.manifest.files["metrics"].endswith("metrics.json")
+
+
+def test_run_training_supports_regime_switching_without_feature_set(tmp_path):
+    """Regime switching training should run intended regime-change tasks."""
+
+    registry = ExperimentRegistry(tmp_path / "metadata.sqlite")
+    result = run_training(
+        TrainingConfig(
+            experiment_name="regime-switching-training",
+            model_type=ModelType.REGIME_SWITCHING,
+            feature_set=[],
+            regime=RegimeTrainingConfig(
+                enabled=True,
+                detector={
+                    "regime_switching": {
+                        "switching_type": "switching_linear",
+                        "feature_columns": ["return"],
+                        "target_column": "target",
+                    }
+                },
+            ),
+            date_split=DateSplitConfig(
+                train_start=date(2024, 1, 1),
+                train_end=date(2024, 1, 4),
+                validation_start=date(2024, 1, 5),
+                validation_end=date(2024, 1, 6),
+            ),
+            artifact_dir=tmp_path / "artifacts",
+        ),
+        registry=registry,
+    )
+
+    assert result.metrics["rows_transformed"] > 0
+    assert result.metrics["regime_count"] >= 1

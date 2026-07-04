@@ -26,11 +26,16 @@ class ModelFamily(StrEnum):
     """Runtime model-family groups used to route queued experiments."""
 
     NEURAL_NETWORK = "neural_network"
+    REGIME = "regime"
     MARKOV = "markov"
     CUSTOM = "custom"
 
 
-_NEURAL_NETWORK_MODEL_TYPES = {model_type.value for model_type in ModelType}
+_NEURAL_NETWORK_MODEL_TYPES = {
+    model_type.value
+    for model_type in ModelType
+    if model_type not in {ModelType.REGIME_DETECTOR, ModelType.REGIME_SWITCHING}
+}
 
 
 def _jsonable(value: Any) -> Any:
@@ -98,6 +103,11 @@ def _metadata_model_family(metadata: Mapping[str, Any]) -> str | None:
 
 def _derive_model_family(model_mapping: Mapping[str, Any]) -> str | None:
     model_type = _optional_text(model_mapping.get("model_type"))
+    if model_type in {
+        ModelType.REGIME_DETECTOR.value,
+        ModelType.REGIME_SWITCHING.value,
+    }:
+        return ModelFamily.REGIME.value
     if model_type in _NEURAL_NETWORK_MODEL_TYPES:
         return ModelFamily.NEURAL_NETWORK.value
     metadata = _mapping(model_mapping.get("metadata"), "model.metadata")
@@ -108,13 +118,13 @@ def _validate_supported_routing(kind: ExperimentKind, model_family: str | None) 
     if kind != ExperimentKind.SUPERVISED_TRAINING:
         raise ValueError(
             f"unsupported experiment kind for queueing: {kind.value}; "
-            f"only {ExperimentKind.SUPERVISED_TRAINING.value} neural-network "
-            "experiments can run today"
+            f"only {ExperimentKind.SUPERVISED_TRAINING.value} experiments can run today"
         )
-    if model_family != ModelFamily.NEURAL_NETWORK.value:
+    if model_family not in {ModelFamily.NEURAL_NETWORK.value, ModelFamily.REGIME.value}:
         raise ValueError(
             f"unsupported model family for {kind.value}: {model_family or 'unknown'}; "
-            f"only {ModelFamily.NEURAL_NETWORK.value} experiments can run today"
+            f"supported families are: {ModelFamily.NEURAL_NETWORK.value}, "
+            f"{ModelFamily.REGIME.value}"
         )
 
 

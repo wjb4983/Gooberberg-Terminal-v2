@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+import pandas as pd
 import torch
 from torch import nn
 
@@ -13,7 +14,17 @@ from quant_platform.experiments.artifacts import (
 )
 from quant_platform.experiments.registry import ExperimentRegistry
 from quant_platform.experiments.schemas import ExperimentRunResult
-from quant_platform.models.factory import build_model_from_dict
+from quant_platform.models.factory import (
+    build_model_from_dict,
+    build_regime_detector_from_dict,
+)
+from quant_platform.models.regime import StateWeightedAllocationModel
+from quant_platform.models.regime_switching import (
+    MarkovSwitchingModel,
+    StateDependentRiskModel,
+    SwitchingLinearModel,
+    build_regime_switching_model_from_dict,
+)
 from quant_platform.models.schemas import ModelType
 from quant_platform.training.datamodule import SyntheticDataModule
 from quant_platform.training.losses import build_loss
@@ -112,6 +123,15 @@ def run_training(
             metadata=experiment_metadata,
         )
 
+    if training_config.model_type == ModelType.REGIME_DETECTOR:
+        return _run_regime_detector_training(
+            training_config, registry, experiment_id, experiment_metadata, device
+        )
+    if training_config.model_type == ModelType.REGIME_SWITCHING:
+        return _run_regime_switching_training(
+            training_config, registry, experiment_id, experiment_metadata, device
+        )
+
     datamodule = SyntheticDataModule(training_config)
     loaders = datamodule.dataloaders()
     model = build_model_from_dict(default_model_config(training_config)).to(device)
@@ -172,6 +192,145 @@ def run_training(
         artifact_dir=artifact_dir,
         device=str(device),
         metrics=final_metrics,
+        history=history,
+        manifest=manifest,
+    )
+
+
+def _synthetic_regime_frame(config: TrainingConfig) -> pd.DataFrame:
+    """Build deterministic tabular data for regime detector/switching training."""
+
+    row_count = max(
+        12,
+        (config.date_split.train_end - config.date_split.train_start).days
+        * config.synthetic_rows_per_day,
+    )
+    generator = torch.Generator().manual_seed(config.seed)
+    base = torch.randn(row_count, max(len(config.feature_set), 1), generator=generator)
+    columns = list(config.feature_set) or ["return"]
+    frame = pd.DataFrame(base[:, : len(columns)].numpy(), columns=columns)
+    if "return" not in frame.columns:
+        frame["return"] = frame.iloc[:, 0].astype(float)
+    frame["close"] = 100.0 + frame["return"].cumsum()
+    frame["volume"] = 1_000_000.0 + frame["return"].abs() * 10_000.0
+    frame["benchmark_return"] = frame["return"].rolling(3, min_periods=1).mean()
+    frame["signal"] = frame["return"].clip(-1.0, 1.0)
+    frame["target_weight"] = frame["signal"]
+    frame["volatility"] = (
+        frame["return"].rolling(5, min_periods=1).std().fillna(0.1).abs() + 0.01
+    )
+    frame["regime"] = (
+        (frame["return"].abs() > frame["return"].abs().median()).astype(int).astype(str)
+    )
+    frame["target"] = frame["return"].shift(-1).fillna(0.0)
+    return frame
+
+
+def _run_regime_detector_training(
+    training_config: TrainingConfig,
+    registry: ExperimentRegistry,
+    experiment_id: int,
+    experiment_metadata: dict[str, Any],
+    device: torch.device,
+) -> ExperimentRunResult:
+    detector_config = training_config.regime.detector or {
+        "detector_type": "rolling_zscore"
+    }
+    detector = build_regime_detector_from_dict(dict(detector_config))
+    frame = _synthetic_regime_frame(training_config)
+    detector.fit(frame)
+    regimes = detector.predict(frame)
+    changes = regimes.astype(str).ne(regimes.astype(str).shift()).sum() - 1
+    metrics = {
+        "regime_count": float(regimes.nunique()),
+        "regime_changes": float(max(int(changes), 0)),
+        "rows_labeled": float(len(regimes)),
+    }
+    history = [{"epoch": 1, **metrics}]
+    for name, value in metrics.items():
+        registry.log_metric(experiment_id, name, value, step=1)
+    artifact_dir = experiment_artifact_dir(
+        training_config.artifact_dir, training_config.experiment_name, experiment_id
+    )
+    manifest = write_training_artifacts(
+        artifact_dir=artifact_dir,
+        experiment_id=experiment_id,
+        experiment_name=training_config.experiment_name,
+        model=nn.Identity(),
+        config=training_config.jsonable(),
+        metrics=metrics,
+        history=history,
+        metadata={
+            **experiment_metadata,
+            "device": str(device),
+            "regime_labels": regimes.astype(str).value_counts().to_dict(),
+        },
+    )
+    return ExperimentRunResult(
+        experiment_id=experiment_id,
+        experiment_name=training_config.experiment_name,
+        artifact_dir=artifact_dir,
+        device=str(device),
+        metrics=metrics,
+        history=history,
+        manifest=manifest,
+    )
+
+
+def _run_regime_switching_training(
+    training_config: TrainingConfig,
+    registry: ExperimentRegistry,
+    experiment_id: int,
+    experiment_metadata: dict[str, Any],
+    device: torch.device,
+) -> ExperimentRunResult:
+    switching_config = (training_config.regime.detector or {}).get(
+        "regime_switching", {"switching_type": "state_weighted_allocation"}
+    )
+    model = build_regime_switching_model_from_dict(dict(switching_config))
+    frame = _synthetic_regime_frame(training_config)
+    metric_name = "rows_transformed"
+    if isinstance(model, SwitchingLinearModel):
+        model.fit(frame)
+        transformed = model.transform(frame)
+        value = float(transformed[model.config.prediction_column].notna().sum())
+    elif isinstance(model, MarkovSwitchingModel):
+        model.fit(frame)
+        probabilities = model.predict_regime_probabilities()
+        value = float(probabilities.shape[0])
+        metric_name = "regime_probability_rows"
+    elif isinstance(model, (StateWeightedAllocationModel, StateDependentRiskModel)):
+        transformed = model.transform_signals(frame)
+        value = float(len(transformed))
+    else:
+        raise TypeError(f"unsupported regime-switching model: {type(model).__name__}")
+    metrics = {metric_name: value, "regime_count": float(frame["regime"].nunique())}
+    history = [{"epoch": 1, **metrics}]
+    for name, metric_value in metrics.items():
+        registry.log_metric(experiment_id, name, metric_value, step=1)
+    artifact_dir = experiment_artifact_dir(
+        training_config.artifact_dir, training_config.experiment_name, experiment_id
+    )
+    manifest = write_training_artifacts(
+        artifact_dir=artifact_dir,
+        experiment_id=experiment_id,
+        experiment_name=training_config.experiment_name,
+        model=nn.Identity(),
+        config=training_config.jsonable(),
+        metrics=metrics,
+        history=history,
+        metadata={
+            **experiment_metadata,
+            "device": str(device),
+            "switching_config": switching_config,
+        },
+    )
+    return ExperimentRunResult(
+        experiment_id=experiment_id,
+        experiment_name=training_config.experiment_name,
+        artifact_dir=artifact_dir,
+        device=str(device),
+        metrics=metrics,
         history=history,
         manifest=manifest,
     )
