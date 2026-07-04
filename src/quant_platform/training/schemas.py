@@ -113,6 +113,7 @@ class TrainingConfig(BaseModel):
     experiment_id: int | None = None
     dataset_name: str = "synthetic_prices"
     dataset_version: str = "1"
+    dataset_id: int | None = None
     model_name: str = "synthetic_mlp"
     model_type: ModelType = ModelType.MLP
     task_type: TaskType = TaskType.REGRESSION
@@ -141,6 +142,7 @@ class TrainingConfig(BaseModel):
     sequence_length: int = Field(default=8, gt=0)
     hidden_size: int = Field(default=16, gt=0)
     artifact_dir: Path = Path("data/artifacts/experiments")
+    data_lake_root: Path = Path("data/lake")
     seed: int = 7
     synthetic_rows_per_day: int = Field(default=4, gt=0)
 

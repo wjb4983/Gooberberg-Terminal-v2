@@ -26,7 +26,7 @@ from quant_platform.models.regime_switching import (
     build_regime_switching_model_from_dict,
 )
 from quant_platform.models.schemas import ModelType
-from quant_platform.training.datamodule import SyntheticDataModule
+from quant_platform.training.datamodule import MarketDataModule, SyntheticDataModule
 from quant_platform.training.losses import build_loss
 from quant_platform.training.metrics import compute_metrics
 from quant_platform.training.schemas import OptimizerName, TrainingConfig
@@ -132,7 +132,11 @@ def run_training(
             training_config, registry, experiment_id, experiment_metadata, device
         )
 
-    datamodule = SyntheticDataModule(training_config)
+    datamodule = (
+        SyntheticDataModule(training_config)
+        if training_config.dataset_name == "synthetic_prices"
+        else MarketDataModule(training_config)
+    )
     loaders = datamodule.dataloaders()
     model = build_model_from_dict(default_model_config(training_config)).to(device)
     loss_fn = build_loss(training_config.loss_function)
@@ -197,6 +201,14 @@ def run_training(
     )
 
 
+def _regime_frame(config: TrainingConfig) -> pd.DataFrame:
+    """Load real market data or build synthetic regime data."""
+
+    if config.dataset_name != "synthetic_prices":
+        return MarketDataModule(config)._load_frame()
+    return _synthetic_regime_frame(config)
+
+
 def _synthetic_regime_frame(config: TrainingConfig) -> pd.DataFrame:
     """Build deterministic tabular data for regime detector/switching training."""
 
@@ -237,7 +249,7 @@ def _run_regime_detector_training(
         "detector_type": "rolling_zscore"
     }
     detector = build_regime_detector_from_dict(dict(detector_config))
-    frame = _synthetic_regime_frame(training_config)
+    frame = _regime_frame(training_config)
     detector.fit(frame)
     regimes = detector.predict(frame)
     changes = regimes.astype(str).ne(regimes.astype(str).shift()).sum() - 1
@@ -288,7 +300,7 @@ def _run_regime_switching_training(
         "regime_switching", {"switching_type": "state_weighted_allocation"}
     )
     model = build_regime_switching_model_from_dict(dict(switching_config))
-    frame = _synthetic_regime_frame(training_config)
+    frame = _regime_frame(training_config)
     metric_name = "rows_transformed"
     if isinstance(model, SwitchingLinearModel):
         model.fit(frame)
