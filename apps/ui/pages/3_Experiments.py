@@ -7,6 +7,11 @@ from typing import Any
 
 import pandas as pd
 import streamlit as st
+from apps.ui.experiment_context import (
+    default_target_for_context,
+    default_training_for_context,
+    is_queueable_experiment_context,
+)
 from apps.ui.workflow_context import (
     ACTIVE_DATASET_ID_KEY,
     ACTIVE_MODEL_ID_KEY,
@@ -343,9 +348,6 @@ with st.form("queue_experiment"):
             if compatible_feature_sets
             else None
         )
-        task_type = st.selectbox(
-            "Task type", list(TaskType), format_func=lambda value: value.value
-        )
         override_compatibility = st.checkbox(
             "Override compatibility checks",
             value=False,
@@ -356,11 +358,71 @@ with st.form("queue_experiment"):
                 "compatibility checks."
             ),
         )
+    target_defaults = default_target_for_context(model)
+    training_defaults = default_training_for_context(model)
     with right:
-        target_name = st.text_input("Target/label name", value="forward_return")
-        target_horizon = st.number_input("Target horizon", min_value=1, value=1, step=1)
-        target_expression = st.text_input(
-            "Target expression", value="weighted_feature_sum"
+        model_type = _normalize_text(model.get("model_type") if model else None)
+        if model_type == ModelType.REGIME_DETECTOR.value:
+            st.caption("Regime detector target context")
+            target_name = st.text_input(
+                "Regime label column", value=target_defaults["name"]
+            )
+            target_horizon = st.number_input(
+                "Regime target horizon",
+                min_value=1,
+                value=int(target_defaults["horizon"]),
+                step=1,
+            )
+            target_expression = st.text_input(
+                "Regime feature columns or discovery mode",
+                value=target_defaults["expression"],
+                help=(
+                    "Use 'regime_classification' for labeled regimes or list the "
+                    "feature columns used by unsupervised regime discovery."
+                ),
+            )
+        elif model_type == ModelType.REGIME_SWITCHING.value:
+            switching_defaults = (
+                (model.get("metadata") or {}).get("regime_switching", {})
+                if model
+                else {}
+            )
+            st.caption("Regime-switching allocation target context")
+            target_name = st.text_input(
+                "Allocation / weight target column", value=target_defaults["name"]
+            )
+            target_horizon = st.number_input(
+                "Allocation target horizon",
+                min_value=1,
+                value=int(target_defaults["horizon"]),
+                step=1,
+            )
+            target_expression = st.text_input(
+                "Signal column", value=target_defaults["expression"]
+            )
+            st.text_input(
+                "Regime column",
+                value=str(switching_defaults.get("regime_column", "regime")),
+                disabled=True,
+            )
+        else:
+            target_name = st.text_input(
+                "Target/label name", value=target_defaults["name"]
+            )
+            target_horizon = st.number_input(
+                "Target horizon",
+                min_value=1,
+                value=int(target_defaults["horizon"]),
+                step=1,
+            )
+            target_expression = st.text_input(
+                "Target expression", value=target_defaults["expression"]
+            )
+        task_type = st.selectbox(
+            "Task type",
+            list(TaskType),
+            index=list(TaskType).index(training_defaults["task_type"]),
+            format_func=lambda value: value.value,
         )
 
     compatibility_reasons, compatibility_warnings = _compatibility_messages(
@@ -407,25 +469,49 @@ with st.form("queue_experiment"):
     st.subheader("Training parameters")
     param_cols = st.columns(4)
     with param_cols[0]:
-        epochs = st.number_input("Epochs", min_value=1, value=2, step=1)
-        batch_size = st.number_input("Batch size", min_value=1, value=16, step=1)
+        epochs = st.number_input(
+            "Epochs", min_value=1, value=int(training_defaults["epochs"]), step=1
+        )
+        batch_size = st.number_input(
+            "Batch size",
+            min_value=1,
+            value=int(training_defaults["batch_size"]),
+            step=1,
+        )
     with param_cols[1]:
         optimizer = st.selectbox(
-            "Optimizer", list(OptimizerName), format_func=lambda value: value.value
+            "Optimizer",
+            list(OptimizerName),
+            index=list(OptimizerName).index(training_defaults["optimizer"]),
+            format_func=lambda value: value.value,
         )
         learning_rate = st.number_input(
-            "Learning rate", min_value=0.000001, value=0.001, format="%.6f"
+            "Learning rate",
+            min_value=0.000001,
+            value=float(training_defaults["learning_rate"]),
+            format="%.6f",
         )
     with param_cols[2]:
         loss_function = st.selectbox(
-            "Loss function", list(LossName), format_func=lambda value: value.value
+            "Loss function",
+            list(LossName),
+            index=list(LossName).index(training_defaults["loss_function"]),
+            format_func=lambda value: value.value,
         )
-        seed = st.number_input("Seed", value=7, step=1)
+        seed = st.number_input("Seed", value=int(training_defaults["seed"]), step=1)
     with param_cols[3]:
         sequence_length = st.number_input(
-            "Sequence length", min_value=1, value=8, step=1
+            "Sequence length",
+            min_value=1,
+            value=int(training_defaults["sequence_length"]),
+            step=1,
         )
-        hidden_size = st.number_input("Hidden size", min_value=1, value=16, step=1)
+        hidden_size = st.number_input(
+            "Hidden size",
+            min_value=1,
+            value=int(training_defaults["hidden_size"]),
+            step=1,
+        )
 
     payload: dict[str, Any] = {}
     if dataset is not None and model is not None:
@@ -457,6 +543,11 @@ with st.form("queue_experiment"):
                 "test_end": test_end,
             },
             training={
+                **{
+                    key: value
+                    for key, value in training_defaults.items()
+                    if key not in {"task_type"}
+                },
                 "epochs": int(epochs),
                 "batch_size": int(batch_size),
                 "optimizer": optimizer,
@@ -466,15 +557,16 @@ with st.form("queue_experiment"):
                 "hidden_size": int(hidden_size),
                 "seed": int(seed),
             },
+            metadata=model.get("metadata") or {},
         )
     with st.expander("Queued training payload preview", expanded=False):
         st.json(payload)
-    queue_disabled = (
-        not datasets
-        or not models
-        or dataset is None
-        or model is None
-        or (bool(compatibility_blockers) and not override_compatibility)
+    queue_disabled = not is_queueable_experiment_context(
+        dataset=dataset,
+        model=model,
+        feature_set=feature_set,
+        compatibility_blockers=compatibility_blockers,
+        override_compatibility=override_compatibility,
     )
     submitted = st.form_submit_button("Queue training job", disabled=queue_disabled)
 
