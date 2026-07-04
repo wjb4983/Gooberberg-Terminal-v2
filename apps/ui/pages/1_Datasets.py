@@ -7,6 +7,11 @@ from datetime import date, timedelta
 import pandas as pd
 import streamlit as st
 
+from apps.ui.workflow_context import (
+    normalize_workflow_context,
+    store_workflow_context,
+)
+
 from quant_platform.datasets.console import (
     asset_class_options,
     build_definition,
@@ -65,6 +70,15 @@ with st.form("dataset_definition"):
     queue_clicked = actions[2].form_submit_button("Queue ingestion")
 
 symbols = parse_asset_universe(symbols_raw)
+store_workflow_context(
+    st.session_state,
+    normalize_workflow_context(
+        asset_class=asset_class,
+        data_types=data_types,
+        provider=provider,
+        dataset_metadata={"asset_class": asset_class},
+    ),
+)
 checks = validate_definition_inputs(
     name=name,
     asset_universe=symbols,
@@ -98,6 +112,16 @@ if checks_passed(checks):
 
     if save_clicked:
         dataset_id = register_dataset(definition, mirror_config=mirror_config)
+        store_workflow_context(
+            st.session_state,
+            normalize_workflow_context(
+                asset_class=asset_class,
+                data_types=data_types,
+                provider=provider,
+                dataset_id=dataset_id,
+                dataset_metadata=definition.metadata,
+            ),
+        )
         st.success(f"Saved dataset definition #{dataset_id}.")
 
     if preview_clicked or queue_clicked:
