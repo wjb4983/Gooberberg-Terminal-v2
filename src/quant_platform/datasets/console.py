@@ -250,6 +250,10 @@ def build_definition(
     resolution: str | None,
     description: str | None = None,
     workflow_intent: str | None = None,
+    regime_source: str | None = None,
+    target_style: str | None = None,
+    preferred_task_type: str | None = None,
+    feature_requirements: Any | None = None,
     labeling_intent: str | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> DatasetDefinition:
@@ -269,6 +273,10 @@ def build_definition(
         metadata=_definition_metadata(
             asset_class=asset_class,
             workflow_intent=workflow_intent,
+            regime_source=regime_source,
+            target_style=target_style,
+            preferred_task_type=preferred_task_type,
+            feature_requirements=feature_requirements,
             labeling_intent=labeling_intent,
             extra_metadata=metadata,
         ),
@@ -331,17 +339,29 @@ def _definition_metadata(
     *,
     asset_class: str,
     workflow_intent: str | None,
+    regime_source: str | None,
+    target_style: str | None,
+    preferred_task_type: str | None,
+    feature_requirements: Any | None,
     labeling_intent: str | None,
     extra_metadata: dict[str, Any] | None,
 ) -> dict[str, Any]:
     resolved_metadata = dict(extra_metadata or {})
     resolved_metadata["asset_class"] = AssetClass(asset_class).value
-    if workflow_intent:
-        resolved_metadata["workflow_intent"] = workflow_intent
-    if labeling_intent:
-        resolved_metadata["labeling_intent"] = labeling_intent
+    optional_metadata = {
+        "workflow_intent": workflow_intent,
+        "regime_source": regime_source,
+        "target_style": target_style,
+        "preferred_task_type": preferred_task_type,
+        "feature_requirements": feature_requirements,
+        "labeling_intent": labeling_intent,
+    }
+    for key, value in optional_metadata.items():
+        if value is not None:
+            resolved_metadata[key] = value
     if workflow_intent == _REGIME_WORKFLOW_INTENT:
-        resolved_metadata.setdefault("regime_source", "learned_from_real_data")
+        resolved_metadata.setdefault("regime_source", "real_market_data")
+        resolved_metadata.setdefault("preferred_task_type", "regime_classification")
     return resolved_metadata
 
 

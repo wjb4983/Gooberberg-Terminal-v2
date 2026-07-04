@@ -130,6 +130,39 @@ with st.form("dataset_definition"):
         help="Enter symbols or selectors separated by commas or new lines.",
     )
     description = st.text_area("Description", value="")
+    metadata_defaults = {
+        "regime_source": "real_market_data" if is_regime_workflow else "",
+        "target_style": "regime_labels" if is_regime_workflow else "",
+        "preferred_task_type": (
+            "regime_classification" if is_regime_workflow else "forecasting"
+        ),
+        "feature_requirements": (
+            "returns, volatility, trend" if is_regime_workflow else ""
+        ),
+    }
+    with st.expander("Compatibility metadata", expanded=is_regime_workflow):
+        st.caption(
+            "These fields are saved with the dataset so later workflow pages can "
+            "infer model/task compatibility."
+        )
+        meta_left, meta_right = st.columns(2)
+        with meta_left:
+            regime_source = st.text_input(
+                "Regime source", value=metadata_defaults["regime_source"]
+            )
+            target_style = st.text_input(
+                "Target style", value=metadata_defaults["target_style"]
+            )
+        with meta_right:
+            preferred_task_type = st.text_input(
+                "Preferred task type",
+                value=metadata_defaults["preferred_task_type"],
+            )
+            feature_requirements_raw = st.text_area(
+                "Feature requirements",
+                value=metadata_defaults["feature_requirements"],
+                help="Comma or newline separated feature hints required downstream.",
+            )
     mirror_config = st.checkbox("Mirror definition to configs/datasets", value=True)
 
     actions = st.columns(3)
@@ -138,13 +171,24 @@ with st.form("dataset_definition"):
     queue_clicked = actions[2].form_submit_button("Queue ingestion")
 
 symbols = parse_asset_universe(symbols_raw)
+feature_requirements = [
+    requirement.strip()
+    for requirement in feature_requirements_raw.replace("\n", ",").split(",")
+    if requirement.strip()
+]
 dataset_metadata = {
     "asset_class": asset_class,
     "workflow_intent": workflow_intent,
     "labeling_intent": selected_intent_label,
 }
-if workflow_intent == "learned_regime_switching":
-    dataset_metadata["regime_source"] = "learned_from_real_data"
+if regime_source.strip():
+    dataset_metadata["regime_source"] = regime_source.strip()
+if target_style.strip():
+    dataset_metadata["target_style"] = target_style.strip()
+if preferred_task_type.strip():
+    dataset_metadata["preferred_task_type"] = preferred_task_type.strip()
+if feature_requirements:
+    dataset_metadata["feature_requirements"] = feature_requirements
 
 store_workflow_context(
     st.session_state,
@@ -188,6 +232,10 @@ if checks_passed(checks):
         resolution=resolution,
         description=description,
         workflow_intent=workflow_intent,
+        regime_source=regime_source.strip() or None,
+        target_style=target_style.strip() or None,
+        preferred_task_type=preferred_task_type.strip() or None,
+        feature_requirements=feature_requirements or None,
         labeling_intent=selected_intent_label,
         metadata=dataset_metadata,
     )
