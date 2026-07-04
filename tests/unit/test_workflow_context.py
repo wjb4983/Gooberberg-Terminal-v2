@@ -68,3 +68,20 @@ def test_workflow_context_persists_stable_session_keys() -> None:
     assert loaded.model_type == "mlp"
     assert not is_real_market_data_dataset(loaded)
     assert not requires_sequence_features(loaded)
+
+
+def test_dataset_context_preserves_regime_workflow_intent() -> None:
+    context = context_from_dataset_row(
+        {
+            "id": 99,
+            "schema": {"provider": "massive", "data_types": ["daily_bars"]},
+            "metadata": {
+                "asset_class": "equity",
+                "workflow_intent": "learned_regime_switching",
+            },
+        }
+    )
+
+    assert context.workflow_intent == REGIME_WORKFLOW_INTENT
+    assert is_regime_dataset_context(context)
+    assert requires_sequence_features(context)

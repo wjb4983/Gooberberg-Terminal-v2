@@ -106,6 +106,9 @@ def context_from_dataset_row(row: Mapping[str, Any] | None) -> WorkflowContext:
         provider=schema.get("provider"),
         dataset_id=row.get("id"),
         dataset_metadata=metadata,
+        workflow_intent=(
+            metadata.get("workflow_intent") or schema.get("workflow_intent")
+        ),
     )
 
 
