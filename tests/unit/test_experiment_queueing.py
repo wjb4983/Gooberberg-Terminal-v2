@@ -325,3 +325,72 @@ def test_build_training_payload_routes_regime_models_to_training_queue() -> None
     assert payload["model_family"] == "regime"
     assert payload["feature_set"] == []
     assert payload["metadata"] == {"regime": {"detector_type": "rolling_zscore"}}
+
+
+def test_regime_dataset_model_compatibility_and_override_queueing() -> None:
+    """Regime compatibility should gate queueing unless explicitly overridden."""
+
+    from apps.ui.experiment_context import is_queueable_experiment_context
+    from apps.ui.experiment_selection import (
+        compatibility_messages,
+        compatible_model_options,
+        is_model_compatible,
+    )
+
+    dataset = {
+        "id": 7,
+        "name": "equity_regime_dataset",
+        "version": "1",
+        "schema": {"provider": "massive", "data_types": ["daily_bars"]},
+        "metadata": {
+            "asset_class": "equity",
+            "workflow_intent": "learned_regime_switching",
+            "regime_labels": True,
+        },
+    }
+    detector = {
+        "id": 11,
+        "name": "equity regime detector",
+        "model_type": "regime_detector",
+        "metadata": {
+            "workflow_intent": "learned_regime_switching",
+            "compatible_asset_classes": ["equity"],
+            "regime": {"detector_type": "rolling_zscore"},
+        },
+    }
+    unrelated = {
+        "id": 12,
+        "name": "crypto forecast",
+        "model_type": "mlp",
+        "metadata": {
+            "workflow_intent": "supervised_forecast",
+            "compatible_asset_classes": ["crypto"],
+        },
+    }
+
+    reasons, warnings = compatibility_messages(dataset, detector)
+    assert any("learned regime switching" in reason for reason in reasons)
+    assert any("equity" in reason for reason in reasons)
+    assert warnings == []
+    assert is_model_compatible(dataset, detector)
+    assert not is_model_compatible(dataset, unrelated)
+    assert compatible_model_options(dataset, [unrelated, detector]) == [detector]
+    assert compatible_model_options(
+        dataset, [unrelated, detector], show_incompatible=True
+    ) == [detector, unrelated]
+
+    blockers = compatibility_messages(dataset, unrelated)[1]
+    assert blockers
+    assert not is_queueable_experiment_context(
+        dataset=dataset,
+        model=unrelated,
+        feature_set={"id": 1, "features": ["return"]},
+        compatibility_blockers=blockers,
+    )
+    assert is_queueable_experiment_context(
+        dataset=dataset,
+        model=unrelated,
+        feature_set={"id": 1, "features": ["return"]},
+        compatibility_blockers=blockers,
+        override_compatibility=True,
+    )

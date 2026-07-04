@@ -12,13 +12,26 @@ from apps.ui.experiment_context import (
     default_training_for_context,
     is_queueable_experiment_context,
 )
+from apps.ui.experiment_selection import (
+    compatibility_messages as _compatibility_messages,
+)
+from apps.ui.experiment_selection import (
+    compatible_model_options,
+)
+from apps.ui.experiment_selection import (
+    feature_set_has_required_columns as _feature_set_has_required_columns,
+)
+from apps.ui.experiment_selection import (
+    normalize_text as _normalize_text,
+)
+from apps.ui.experiment_selection import (
+    required_model_columns as _required_model_columns,
+)
 from apps.ui.workflow_context import (
     ACTIVE_DATASET_ID_KEY,
     ACTIVE_MODEL_ID_KEY,
-    REGIME_WORKFLOW_INTENT,
     context_from_dataset_row,
     context_from_model_row,
-    is_regime_dataset_context,
     merge_workflow_context,
     store_workflow_context,
 )
@@ -64,198 +77,6 @@ def _active_index(rows: list[dict[str, Any]], session_key: str) -> int:
         if row.get("id") == active_id:
             return index
     return 0
-
-
-def _normalize_text(value: Any) -> str | None:
-    if value is None:
-        return None
-    text = str(value).strip().lower()
-    return text or None
-
-
-def _as_text_set(value: Any) -> set[str]:
-    if value is None:
-        return set()
-    if isinstance(value, str):
-        values = value.replace(";", ",").split(",")
-    elif isinstance(value, dict):
-        values = value.values()
-    else:
-        values = value
-    return {_normalize_text(item) for item in values if _normalize_text(item)}
-
-
-def _dataset_workflow_intent(dataset: dict[str, Any] | None) -> str | None:
-    if dataset is None:
-        return None
-    metadata = dataset.get("metadata") or {}
-    schema = dataset.get("schema") or {}
-    return _normalize_text(
-        metadata.get("workflow_intent") or schema.get("workflow_intent")
-    )
-
-
-def _asset_classes_from_dataset(dataset: dict[str, Any] | None) -> set[str]:
-    if dataset is None:
-        return set()
-    metadata = dataset.get("metadata") or {}
-    schema = dataset.get("schema") or {}
-    return _as_text_set(
-        metadata.get("compatible_asset_classes")
-        or metadata.get("asset_classes")
-        or metadata.get("asset_class")
-        or schema.get("asset_classes")
-        or schema.get("asset_class")
-    )
-
-
-def _asset_classes_from_model(model: dict[str, Any] | None) -> set[str]:
-    if model is None:
-        return set()
-    metadata = model.get("metadata") or {}
-    return _as_text_set(
-        metadata.get("compatible_asset_classes")
-        or metadata.get("asset_classes")
-        or metadata.get("asset_class")
-    )
-
-
-def _model_workflow_intent(model: dict[str, Any] | None) -> str | None:
-    if model is None:
-        return None
-    metadata = model.get("metadata") or {}
-    model_context = context_from_model_row(model)
-    return (
-        _normalize_text(metadata.get("workflow_intent"))
-        or model_context.workflow_intent
-    )
-
-
-def _required_model_columns(model: dict[str, Any] | None) -> set[str]:
-    if model is None:
-        return set()
-    metadata = model.get("metadata") or {}
-    required = set()
-    for key in ("required_feature_columns", "feature_columns"):
-        required.update(_as_text_set(metadata.get(key)))
-    for config_key in ("regime", "regime_switching"):
-        config = metadata.get(config_key) or {}
-        if isinstance(config, dict):
-            for key in (
-                "feature_column",
-                "feature_columns",
-                "endog_column",
-                "exog_columns",
-                "return_column",
-                "volatility_column",
-            ):
-                required.update(_as_text_set(config.get(key)))
-    return required
-
-
-def _requires_regime_labels(model: dict[str, Any] | None) -> bool:
-    if model is None:
-        return False
-    metadata = model.get("metadata") or {}
-    model_type = _normalize_text(model.get("model_type"))
-    return bool(
-        model_type == ModelType.REGIME_SWITCHING.value
-        or metadata.get("requires_regime_labels")
-        or metadata.get("regime_switching")
-    )
-
-
-def _dataset_has_regime_labels(dataset: dict[str, Any] | None) -> bool:
-    if dataset is None:
-        return False
-    context = context_from_dataset_row(dataset)
-    metadata = dataset.get("metadata") or {}
-    schema = dataset.get("schema") or {}
-    columns = _as_text_set(metadata.get("columns") or schema.get("columns"))
-    regime_column = _normalize_text(metadata.get("regime_column")) or "regime"
-    return bool(
-        is_regime_dataset_context(context)
-        or metadata.get("regime_labels")
-        or metadata.get("has_regime_labels")
-        or regime_column in columns
-    )
-
-
-def _compatibility_messages(
-    dataset: dict[str, Any] | None, model: dict[str, Any] | None
-) -> tuple[list[str], list[str]]:
-    if dataset is None or model is None:
-        return [], []
-    reasons: list[str] = []
-    warnings: list[str] = []
-    dataset_intent = _dataset_workflow_intent(dataset)
-    model_intent = _model_workflow_intent(model)
-    if dataset_intent and model_intent:
-        if dataset_intent == model_intent:
-            if dataset_intent == REGIME_WORKFLOW_INTENT:
-                reasons.append(
-                    "Compatible because both are for learned regime switching."
-                )
-            else:
-                reasons.append(
-                    "Compatible because both advertise workflow intent "
-                    f"'{dataset_intent}'."
-                )
-        else:
-            warnings.append(
-                "Warning: dataset workflow intent "
-                f"'{dataset_intent}' does not match model intent '{model_intent}'."
-            )
-    dataset_assets = _asset_classes_from_dataset(dataset)
-    model_assets = _asset_classes_from_model(model)
-    if dataset_assets and model_assets:
-        overlap = dataset_assets.intersection(model_assets)
-        if overlap:
-            reasons.append(
-                "Compatible because asset classes overlap: "
-                + ", ".join(sorted(overlap))
-                + "."
-            )
-        else:
-            warnings.append(
-                "Warning: model asset classes do not match the selected dataset."
-            )
-    if _requires_regime_labels(model) and not _dataset_has_regime_labels(dataset):
-        warnings.append(
-            "Warning: model requires regime labels, but selected dataset does "
-            "not advertise them."
-        )
-    if not reasons and not warnings:
-        reasons.append(
-            "Compatible because no restrictive dataset/model metadata conflicts "
-            "were found."
-        )
-    return reasons, warnings
-
-
-def _is_model_compatible(dataset: dict[str, Any] | None, model: dict[str, Any]) -> bool:
-    _, warnings = _compatibility_messages(dataset, model)
-    return not warnings
-
-
-def _sort_models_for_dataset(
-    dataset: dict[str, Any] | None, rows: list[dict[str, Any]]
-) -> list[dict[str, Any]]:
-    if _dataset_workflow_intent(dataset) != REGIME_WORKFLOW_INTENT:
-        return rows
-    preferred = {ModelType.REGIME_DETECTOR.value, ModelType.REGIME_SWITCHING.value}
-    return sorted(
-        rows, key=lambda row: _normalize_text(row.get("model_type")) not in preferred
-    )
-
-
-def _feature_set_has_required_columns(
-    feature_set: dict[str, Any], required_columns: set[str]
-) -> bool:
-    if not required_columns:
-        return True
-    features = _as_text_set(feature_set.get("features"))
-    return required_columns.issubset(features)
 
 
 def _metrics(experiment_id: int) -> list[dict[str, Any]]:
@@ -312,13 +133,8 @@ with st.form("queue_experiment"):
                 "dataset metadata."
             ),
         )
-        compatible_models = [
-            row
-            for row in models
-            if dataset is None or _is_model_compatible(dataset, row)
-        ]
-        model_options = _sort_models_for_dataset(
-            dataset, models if show_incompatible_models else compatible_models
+        model_options = compatible_model_options(
+            dataset, models, show_incompatible=show_incompatible_models
         )
         model = (
             st.selectbox(
