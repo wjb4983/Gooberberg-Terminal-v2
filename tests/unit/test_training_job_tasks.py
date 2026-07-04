@@ -143,3 +143,71 @@ def test_run_training_job_updates_job_and_experiment_on_failure(monkeypatch, tmp
     assert experiment["completed_at"] is not None
     assert experiment["metadata"]["source"] == "test"
     assert experiment["metadata"]["error"] == "training exploded with a concise error"
+
+
+def test_training_config_from_payload_keeps_regime_metadata_without_feature_set():
+    """Queued regime payloads should not fail with the old empty-feature-set error."""
+
+    config = tasks._training_config_from_payload(
+        {
+            "experiment_id": 1,
+            "experiment_name": "training spyqqq",
+            "model_type": "regime_detector",
+            "task_type": "regression",
+            "feature_set": [],
+            "metadata": {
+                "regime": {
+                    "detector_type": "rolling_zscore",
+                    "feature_column": "return",
+                }
+            },
+            "split": {
+                "train_start": "2024-01-01",
+                "train_end": "2024-01-02",
+                "validation_start": "2024-01-03",
+                "validation_end": "2024-01-04",
+            },
+        }
+    )
+
+    assert config.model_type.value == "regime_detector"
+    assert config.feature_set == []
+    assert config.regime.enabled is True
+    assert config.regime.detector == {
+        "detector_type": "rolling_zscore",
+        "feature_column": "return",
+    }
+
+
+def test_training_job_failure_logs_verbose_structured_error(monkeypatch, tmp_path):
+    """Failed jobs should persist descriptive logs with exception type and traceback."""
+
+    catalog = _configure_catalog(monkeypatch, tmp_path)
+    experiment_id, job_id = _insert_training_rows(catalog)
+
+    def fake_run_training(config):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(tasks, "run_training", fake_run_training)
+
+    with pytest.raises(RuntimeError, match="boom"):
+        tasks.run_training_job(
+            job_id,
+            {
+                "experiment_id": experiment_id,
+                "experiment_name": "queued training",
+                "date_split": {
+                    "train_start": "2024-01-01",
+                    "train_end": "2024-01-31",
+                    "validation_start": "2024-02-01",
+                    "validation_end": "2024-02-15",
+                },
+            },
+        )
+
+    logs = catalog.list_rows("job_logs")
+    error_log = logs[-1]
+    assert error_log["level"] == "error"
+    assert error_log["message"] == "Job failed with RuntimeError: boom"
+    assert error_log["metadata"]["exception_type"] == "RuntimeError"
+    assert "Traceback" in error_log["metadata"]["traceback"]

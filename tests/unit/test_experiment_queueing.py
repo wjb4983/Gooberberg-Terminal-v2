@@ -301,3 +301,27 @@ def test_api_and_ui_training_jobs_use_same_job_type(monkeypatch, tmp_path) -> No
     assert {job["job_type"] for job in jobs} == {"training"}
     assert jobs[0]["job_type"] == jobs[1]["job_type"] == "training"
     assert ui_queued.job_type == "training"
+
+
+def test_build_training_payload_routes_regime_models_to_training_queue() -> None:
+    """Regime detector definitions should be routable through training jobs."""
+
+    payload = build_training_experiment_payload(
+        experiment_name="regime training",
+        dataset={"id": 7, "name": "prices", "version": "1"},
+        model={"id": 11, "name": "regime", "model_type": "regime_detector"},
+        task_type=TaskType.REGRESSION,
+        target=TargetDefinition(),
+        split={
+            "train_start": date(2024, 1, 1),
+            "train_end": date(2024, 1, 2),
+            "validation_start": date(2024, 1, 3),
+            "validation_end": date(2024, 1, 4),
+        },
+        training={"epochs": 1},
+        metadata={"regime": {"detector_type": "rolling_zscore"}},
+    )
+
+    assert payload["model_family"] == "regime"
+    assert payload["feature_set"] == []
+    assert payload["metadata"] == {"regime": {"detector_type": "rolling_zscore"}}
