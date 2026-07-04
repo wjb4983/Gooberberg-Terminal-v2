@@ -27,6 +27,104 @@ from quant_platform.data.storage.catalog import MetadataCatalog, jobs
 from quant_platform.datasets.registry import DatasetRegistry
 from quant_platform.datasets.schemas import DatasetDefinition
 
+WORKFLOW_INTENT_OPTIONS: tuple[tuple[str, str], ...] = (
+    ("Supervised forecasting", "supervised_forecasting"),
+    ("Learned regime switching", "learned_regime_switching"),
+    ("Backtesting/allocation", "backtesting_allocation"),
+    ("Raw market data", "raw_market_data"),
+)
+
+_REGIME_WORKFLOW_INTENT = "learned_regime_switching"
+
+_PROVIDER_OPTIONS_BY_ASSET_CLASS: dict[str, tuple[str, ...]] = {
+    AssetClass.EQUITY.value: (
+        Provider.MASSIVE.value,
+        Provider.POLYGON.value,
+        Provider.ALPACA.value,
+        Provider.YAHOO.value,
+    ),
+    AssetClass.ETF.value: (
+        Provider.MASSIVE.value,
+        Provider.POLYGON.value,
+        Provider.ALPACA.value,
+        Provider.YAHOO.value,
+    ),
+    AssetClass.INDEX.value: (
+        Provider.POLYGON.value,
+        Provider.YAHOO.value,
+        Provider.MASSIVE.value,
+    ),
+    AssetClass.FOREX.value: (Provider.POLYGON.value, Provider.MASSIVE.value),
+    AssetClass.CRYPTO.value: (
+        Provider.POLYGON.value,
+        Provider.MASSIVE.value,
+        Provider.ALPACA.value,
+    ),
+    AssetClass.FUTURE.value: (Provider.POLYGON.value, Provider.MASSIVE.value),
+    AssetClass.OPTION.value: (Provider.POLYGON.value, Provider.MASSIVE.value),
+}
+
+_DATA_TYPE_OPTIONS_BY_ASSET_CLASS: dict[str, tuple[str, ...]] = {
+    AssetClass.EQUITY.value: tuple(data_type.value for data_type in DataType),
+    AssetClass.ETF.value: tuple(data_type.value for data_type in DataType),
+    AssetClass.INDEX.value: (
+        DataType.BARS.value,
+        DataType.DAILY_BARS.value,
+        DataType.NEWS.value,
+    ),
+    AssetClass.FOREX.value: (
+        DataType.TRADES.value,
+        DataType.QUOTES.value,
+        DataType.BARS.value,
+        DataType.DAILY_BARS.value,
+        DataType.NEWS.value,
+    ),
+    AssetClass.CRYPTO.value: (
+        DataType.TRADES.value,
+        DataType.QUOTES.value,
+        DataType.BARS.value,
+        DataType.DAILY_BARS.value,
+        DataType.NEWS.value,
+    ),
+    AssetClass.FUTURE.value: (
+        DataType.TRADES.value,
+        DataType.QUOTES.value,
+        DataType.BARS.value,
+        DataType.DAILY_BARS.value,
+        DataType.NEWS.value,
+    ),
+    AssetClass.OPTION.value: (
+        DataType.TRADES.value,
+        DataType.QUOTES.value,
+        DataType.BARS.value,
+        DataType.DAILY_BARS.value,
+    ),
+}
+
+_REGIME_DATA_TYPE_OPTIONS = (DataType.DAILY_BARS.value, DataType.BARS.value)
+_REGIME_DEFAULT_SYMBOLS: dict[str, tuple[str, ...]] = {
+    AssetClass.EQUITY.value: ("SPY", "QQQ", "IWM", "DIA", "VTI"),
+    AssetClass.ETF.value: ("SPY", "QQQ", "IWM", "TLT", "GLD"),
+    AssetClass.INDEX.value: ("SPY", "QQQ", "IWM", "DIA", "VIXY"),
+    AssetClass.FOREX.value: ("EURUSD", "USDJPY", "GBPUSD", "DXY"),
+    AssetClass.CRYPTO.value: ("BTCUSD", "ETHUSD", "SOLUSD"),
+}
+_DEFAULT_SYMBOLS: dict[str, tuple[str, ...]] = {
+    AssetClass.EQUITY.value: ("AAPL", "MSFT", "SPY"),
+    AssetClass.ETF.value: ("SPY", "QQQ", "IWM"),
+    AssetClass.INDEX.value: ("SPY", "QQQ", "DIA"),
+    AssetClass.FOREX.value: ("EURUSD", "USDJPY", "GBPUSD"),
+    AssetClass.CRYPTO.value: ("BTCUSD", "ETHUSD", "SOLUSD"),
+    AssetClass.FUTURE.value: ("ES", "NQ", "CL"),
+    AssetClass.OPTION.value: ("SPY", "QQQ", "AAPL"),
+}
+
+
+def workflow_intent_options() -> list[tuple[str, str]]:
+    """Return display labels and stable values for workflow intent controls."""
+
+    return list(WORKFLOW_INTENT_OPTIONS)
+
 
 @dataclass(frozen=True)
 class ValidationCheck:
@@ -62,10 +160,61 @@ def provider_options() -> list[str]:
     return [provider.value for provider in Provider]
 
 
+def provider_options_for_asset_class(asset_class: str) -> list[str]:
+    """Return provider options relevant to the selected asset class."""
+
+    return list(
+        _PROVIDER_OPTIONS_BY_ASSET_CLASS.get(asset_class, tuple(provider_options()))
+    )
+
+
 def data_type_options() -> list[str]:
     """Return supported data type values for UI controls."""
 
     return [data_type.value for data_type in DataType]
+
+
+def data_type_options_for_asset_class(
+    asset_class: str, workflow_intent: str | None = None
+) -> list[str]:
+    """Return data types relevant to the selected asset class and workflow intent."""
+
+    asset_options = _DATA_TYPE_OPTIONS_BY_ASSET_CLASS.get(
+        asset_class, tuple(data_type_options())
+    )
+    if workflow_intent == _REGIME_WORKFLOW_INTENT:
+        return [
+            option for option in _REGIME_DATA_TYPE_OPTIONS if option in asset_options
+        ]
+    return list(asset_options)
+
+
+def default_resolution_for_context(
+    asset_class: str, workflow_intent: str | None = None
+) -> str:
+    """Return the suggested resolution for the selected dataset context."""
+
+    if workflow_intent == _REGIME_WORKFLOW_INTENT:
+        return "1d"
+    if (
+        asset_class in {AssetClass.CRYPTO.value, AssetClass.FOREX.value}
+        and workflow_intent == "raw_market_data"
+    ):
+        return "1h"
+    return "1d"
+
+
+def default_symbols_for_context(
+    asset_class: str, workflow_intent: str | None = None
+) -> list[str]:
+    """Return suggested symbols for the selected asset class and workflow intent."""
+
+    defaults = (
+        _REGIME_DEFAULT_SYMBOLS
+        if workflow_intent == _REGIME_WORKFLOW_INTENT
+        else _DEFAULT_SYMBOLS
+    )
+    return list(defaults.get(asset_class, _DEFAULT_SYMBOLS[AssetClass.EQUITY.value]))
 
 
 def asset_class_options() -> list[str]:
@@ -100,6 +249,9 @@ def build_definition(
     asset_class: str,
     resolution: str | None,
     description: str | None = None,
+    workflow_intent: str | None = None,
+    labeling_intent: str | None = None,
+    metadata: dict[str, Any] | None = None,
 ) -> DatasetDefinition:
     """Build and validate a logical dataset definition from page inputs."""
 
@@ -114,7 +266,12 @@ def build_definition(
         description=(
             description.strip() if description and description.strip() else None
         ),
-        metadata={"asset_class": AssetClass(asset_class).value},
+        metadata=_definition_metadata(
+            asset_class=asset_class,
+            workflow_intent=workflow_intent,
+            labeling_intent=labeling_intent,
+            extra_metadata=metadata,
+        ),
     )
 
 
@@ -127,9 +284,18 @@ def validate_definition_inputs(
     end: date,
     provider: str,
     asset_class: str,
+    provider_options_allowed: list[str] | None = None,
+    data_type_options_allowed: list[str] | None = None,
 ) -> tuple[ValidationCheck, ...]:
     """Return basic validation checks without raising page-level exceptions."""
 
+    allowed_providers = provider_options_allowed or provider_options_for_asset_class(
+        asset_class
+    )
+    allowed_data_types = data_type_options_allowed or data_type_options_for_asset_class(
+        asset_class
+    )
+    unsupported_data_types = sorted(set(data_types) - set(allowed_data_types))
     checks = [
         ValidationCheck("Dataset name", bool(name.strip()), "Name is required."),
         ValidationCheck(
@@ -138,13 +304,19 @@ def validate_definition_inputs(
             "At least one symbol or selector is required.",
         ),
         ValidationCheck(
-            "Data types", bool(data_types), "At least one data type is required."
+            "Data types",
+            bool(data_types) and not unsupported_data_types,
+            "At least one relevant data type is required."
+            if not data_types
+            else f"Unsupported for this context: {', '.join(unsupported_data_types)}.",
         ),
         ValidationCheck(
             "Date range", start <= end, "Start date must be on or before end date."
         ),
         ValidationCheck(
-            "Provider", provider in provider_options(), "Provider must be supported."
+            "Provider",
+            provider in allowed_providers,
+            "Provider must be supported for this asset class.",
         ),
         ValidationCheck(
             "Asset class",
@@ -153,6 +325,24 @@ def validate_definition_inputs(
         ),
     ]
     return tuple(checks)
+
+
+def _definition_metadata(
+    *,
+    asset_class: str,
+    workflow_intent: str | None,
+    labeling_intent: str | None,
+    extra_metadata: dict[str, Any] | None,
+) -> dict[str, Any]:
+    resolved_metadata = dict(extra_metadata or {})
+    resolved_metadata["asset_class"] = AssetClass(asset_class).value
+    if workflow_intent:
+        resolved_metadata["workflow_intent"] = workflow_intent
+    if labeling_intent:
+        resolved_metadata["labeling_intent"] = labeling_intent
+    if workflow_intent == _REGIME_WORKFLOW_INTENT:
+        resolved_metadata.setdefault("regime_source", "learned_from_real_data")
+    return resolved_metadata
 
 
 def checks_passed(checks: tuple[ValidationCheck, ...]) -> bool:
@@ -246,6 +436,7 @@ def queue_ingestion(
         "end": request.end.isoformat(),
         "asset_class": request.asset_class,
         "resolution": request.resolution,
+        "metadata": dict(definition.metadata),
     }
     job_id = resolved_catalog.insert_row(
         "jobs",
