@@ -7,6 +7,9 @@ from typing import Any
 import pandas as pd
 import streamlit as st
 from apps.ui.regime_helpers import (
+    default_regime_feature_columns,
+    fields_for_regime_detector_type,
+    fields_for_switching_type,
     model_regime_config,
     model_regime_switching_config,
     parse_csv_columns,
@@ -151,7 +154,14 @@ def _default_feature_columns(dataset_metadata: dict[str, Any]) -> list[str]:
     feature_set_columns = _metadata_list(
         dataset_metadata, "feature_set_columns", "feature_columns", "features"
     )
-    candidates = [*feature_set_columns, *REAL_DATA_FEATURE_CANDIDATES]
+    candidates = [
+        *feature_set_columns,
+        *default_regime_feature_columns(
+            dataset_metadata.get("asset_class"),
+            dataset_metadata.get("workflow_intent"),
+        ),
+        *REAL_DATA_FEATURE_CANDIDATES,
+    ]
     seen: set[str] = set()
     return [col for col in candidates if not (col in seen or seen.add(col))] or [
         "return"
@@ -376,46 +386,162 @@ with st.form("model_definition"):
             value=model_type == ModelType.REGIME_DETECTOR,
             disabled=model_type == ModelType.REGIME_DETECTOR,
         )
-        regime_cols = st.columns(5)
-        with regime_cols[0]:
-            regime_detector_type = st.selectbox(
-                "Detector type",
-                list(RegimeDetectorType),
-                format_func=lambda value: value.value,
-                disabled=not regime_enabled,
-            )
-        with regime_cols[1]:
-            regime_lookback = st.number_input(
-                "Regime lookback",
-                min_value=2,
-                value=max(2, int(sequence_length)),
-                step=1,
-                disabled=not regime_enabled,
-            )
-        with regime_cols[2]:
-            regime_threshold = st.number_input(
-                "Regime threshold", value=0.0, step=0.01, disabled=not regime_enabled
-            )
-        with regime_cols[3]:
+        detector_disabled = not regime_enabled
+        regime_detector_type = st.selectbox(
+            "Detector type",
+            list(RegimeDetectorType),
+            format_func=lambda value: value.value,
+            disabled=detector_disabled,
+        )
+        detector_fields = fields_for_regime_detector_type(regime_detector_type)
+        regime_lookback = max(2, int(sequence_length))
+        regime_threshold = 0.0
+        regime_direction = "above"
+        regime_feature_columns_raw = default_features_raw
+        regime_n_regimes = 2
+        regime_window_size = max(2, int(sequence_length))
+        regime_entry_zscore = 2.0
+        regime_exit_zscore = 0.5
+        regime_random_state = 0
+        regime_n_components = 1
+        regime_score_method = "explained_variance"
+        regime_covariance_type = "diag"
+        regime_max_iter = 100
+        regime_seed = 0
+
+        visible_fields = st.columns(min(4, max(1, len(detector_fields))))
+        field_slot = 0
+        if "lookback" in detector_fields:
+            with visible_fields[field_slot % len(visible_fields)]:
+                regime_lookback = st.number_input(
+                    "Regime lookback",
+                    min_value=2,
+                    value=max(2, int(sequence_length)),
+                    step=1,
+                    disabled=detector_disabled,
+                )
+            field_slot += 1
+        if "window_size" in detector_fields:
+            with visible_fields[field_slot % len(visible_fields)]:
+                regime_window_size = st.number_input(
+                    "Regime window size",
+                    min_value=2,
+                    value=max(2, int(sequence_length)),
+                    step=1,
+                    disabled=detector_disabled,
+                )
+            field_slot += 1
+        if "n_regimes" in detector_fields:
+            with visible_fields[field_slot % len(visible_fields)]:
+                regime_n_regimes = st.number_input(
+                    "Number of regimes",
+                    min_value=2,
+                    max_value=20,
+                    value=2,
+                    step=1,
+                    disabled=detector_disabled,
+                )
+            field_slot += 1
+        if "threshold" in detector_fields:
+            with visible_fields[field_slot % len(visible_fields)]:
+                regime_threshold = st.number_input(
+                    "Regime threshold", value=0.0, step=0.01, disabled=detector_disabled
+                )
+            field_slot += 1
+        if "direction" in detector_fields:
+            with visible_fields[field_slot % len(visible_fields)]:
+                regime_direction = st.selectbox(
+                    "Threshold direction",
+                    ["above", "below", "outside", "inside"],
+                    disabled=detector_disabled,
+                )
+            field_slot += 1
+        if "feature_column" in detector_fields:
+            with visible_fields[field_slot % len(visible_fields)]:
+                regime_feature_column = st.text_input(
+                    "Regime feature column",
+                    value=default_feature_columns[0],
+                    disabled=detector_disabled,
+                )
+                regime_feature_columns_raw = regime_feature_column
+            field_slot += 1
+        if "feature_columns" in detector_fields:
             regime_feature_columns_raw = st.text_input(
                 "Regime feature columns",
                 value=default_features_raw,
-                disabled=not regime_enabled,
+                disabled=detector_disabled,
             )
-        with regime_cols[4]:
-            regime_weights_raw = st.text_area(
-                "Regime-to-weight mapping",
-                value="",
-                placeholder="high_risk: 0.25",
-                disabled=not regime_enabled,
-            )
+        with st.expander("Advanced detector parameters", expanded=False):
+            if "entry_zscore" in detector_fields:
+                regime_entry_zscore = st.number_input(
+                    "Entry z-score",
+                    min_value=0.01,
+                    value=2.0,
+                    step=0.1,
+                    disabled=detector_disabled,
+                )
+            if "exit_zscore" in detector_fields:
+                regime_exit_zscore = st.number_input(
+                    "Exit z-score",
+                    min_value=0.0,
+                    value=0.5,
+                    step=0.1,
+                    disabled=detector_disabled,
+                )
+            if "random_state" in detector_fields:
+                regime_random_state = st.number_input(
+                    "Random state", value=0, step=1, disabled=detector_disabled
+                )
+            if "n_components" in detector_fields:
+                regime_n_components = st.number_input(
+                    "PCA components",
+                    min_value=1,
+                    value=1,
+                    step=1,
+                    disabled=detector_disabled,
+                )
+            if "score_method" in detector_fields:
+                regime_score_method = st.selectbox(
+                    "PCA score method",
+                    ["explained_variance", "first_component"],
+                    disabled=detector_disabled,
+                )
+            if "covariance_type" in detector_fields:
+                regime_covariance_type = st.selectbox(
+                    "HMM covariance type",
+                    ["diag", "full", "spherical", "tied"],
+                    disabled=detector_disabled,
+                )
+            if "max_iter" in detector_fields:
+                regime_max_iter = st.number_input(
+                    "Max iterations",
+                    min_value=1,
+                    value=100,
+                    step=10,
+                    disabled=detector_disabled,
+                )
+            if "seed" in detector_fields:
+                regime_seed = st.number_input(
+                    "Seed", value=0, step=1, disabled=detector_disabled
+                )
         regime_config = model_regime_config(
             enabled=regime_enabled,
             detector_type=regime_detector_type,
             lookback=int(regime_lookback),
             threshold=float(regime_threshold),
             feature_columns=parse_csv_columns(regime_feature_columns_raw),
-            regime_weights=parse_regime_weights(regime_weights_raw),
+            regime_weights={},
+            direction=regime_direction,
+            n_regimes=int(regime_n_regimes),
+            window_size=int(regime_window_size),
+            entry_zscore=float(regime_entry_zscore),
+            exit_zscore=float(regime_exit_zscore),
+            random_state=int(regime_random_state),
+            n_components=int(regime_n_components),
+            score_method=regime_score_method,
+            covariance_type=regime_covariance_type,
+            max_iter=int(regime_max_iter),
+            seed=int(regime_seed),
         )
 
     if model_type == ModelType.REGIME_SWITCHING or show_advanced_regime_metadata:
@@ -425,43 +551,155 @@ with st.form("model_definition"):
             value=model_type == ModelType.REGIME_SWITCHING,
             disabled=model_type == ModelType.REGIME_SWITCHING,
         )
-        switch_cols = st.columns(5)
-        with switch_cols[0]:
-            switching_type = st.selectbox(
-                "Switching type",
-                list(RegimeSwitchingType),
-                format_func=lambda value: value.value,
-                disabled=not switching_enabled,
-            )
-        with switch_cols[1]:
-            switching_regime_column = st.text_input(
-                "Switching regime column",
-                value="regime",
-                disabled=not switching_enabled,
-            )
-        with switch_cols[2]:
-            switching_signal_column = st.text_input(
-                "Switching signal column",
-                value="signal",
-                disabled=not switching_enabled,
-            )
-        with switch_cols[3]:
-            switching_target_weight_column = st.text_input(
-                "Switching target weight column",
-                value="target_weight",
-                disabled=not switching_enabled,
-            )
-        with switch_cols[4]:
+        switching_disabled = not switching_enabled
+        switching_type = st.selectbox(
+            "Switching type",
+            list(RegimeSwitchingType),
+            format_func=lambda value: value.value,
+            disabled=switching_disabled,
+        )
+        switching_fields = fields_for_switching_type(switching_type)
+        switching_regime_column = "regime"
+        switching_signal_column = "signal"
+        switching_target_weight_column = "target_weight"
+        switching_features_raw = default_features_raw
+        switching_weights_raw = "high_risk: 0.25"
+        switching_target_column = default_target_column
+        switching_prediction_column = "prediction"
+        switching_adjusted_signal_column = "risk_adjusted_signal"
+        switching_volatility_column = "volatility"
+        switching_return_column = "return"
+        switching_default_max_leverage = 1.0
+        switching_default_cash_allocation = 0.0
+        switching_endog_column = "return"
+        switching_exog_raw = ""
+        switching_n_regimes = 2
+        switching_trend = "c"
+        switching_variance = True
+        switching_max_iter = 100
+        switching_default_weight = 1.0
+
+        base_cols = st.columns(3)
+        if "regime_column" in switching_fields:
+            with base_cols[0]:
+                switching_regime_column = st.text_input(
+                    "Switching regime column",
+                    value="regime",
+                    disabled=switching_disabled,
+                )
+        if "n_regimes" in switching_fields:
+            with base_cols[1]:
+                switching_n_regimes = st.number_input(
+                    "Switching number of regimes",
+                    min_value=2,
+                    value=2,
+                    step=1,
+                    disabled=switching_disabled,
+                )
+        if "feature_columns" in switching_fields:
             switching_features_raw = st.text_input(
                 "Switching feature columns",
                 value=default_features_raw,
-                disabled=not switching_enabled,
+                disabled=switching_disabled,
             )
-        switching_weights_raw = st.text_area(
-            "Switching regime-to-weight/leverage mapping",
-            value="high_risk: 0.25",
-            disabled=not switching_enabled,
-        )
+        if "signal_column" in switching_fields:
+            with base_cols[1]:
+                switching_signal_column = st.text_input(
+                    "Signal column", value="signal", disabled=switching_disabled
+                )
+        if "target_weight_column" in switching_fields:
+            with base_cols[2]:
+                switching_target_weight_column = st.text_input(
+                    "Target weight column",
+                    value="target_weight",
+                    disabled=switching_disabled,
+                )
+        if "regime_weights" in switching_fields:
+            switching_weights_raw = st.text_area(
+                "Regime-to-weight mapping",
+                value="high_risk: 0.25",
+                disabled=switching_disabled,
+            )
+        if "target_column" in switching_fields:
+            switching_target_column = st.text_input(
+                "Target column",
+                value=default_target_column,
+                disabled=switching_disabled,
+            )
+        if "prediction_column" in switching_fields:
+            switching_prediction_column = st.text_input(
+                "Prediction column", value="prediction", disabled=switching_disabled
+            )
+        if "max_leverage_by_regime" in switching_fields:
+            switching_weights_raw = st.text_area(
+                "Regime-to-max-leverage mapping",
+                value="high_risk: 0.25",
+                disabled=switching_disabled,
+            )
+        with st.expander("Advanced switching parameters", expanded=False):
+            if "default_weight" in switching_fields:
+                switching_default_weight = st.number_input(
+                    "Default weight",
+                    min_value=0.0,
+                    value=1.0,
+                    step=0.1,
+                    disabled=switching_disabled,
+                )
+            if "adjusted_signal_column" in switching_fields:
+                switching_adjusted_signal_column = st.text_input(
+                    "Adjusted signal column",
+                    value="risk_adjusted_signal",
+                    disabled=switching_disabled,
+                )
+            if "volatility_column" in switching_fields:
+                switching_volatility_column = st.text_input(
+                    "Volatility column", value="volatility", disabled=switching_disabled
+                )
+            if "return_column" in switching_fields:
+                switching_return_column = st.text_input(
+                    "Return column", value="return", disabled=switching_disabled
+                )
+            if "default_max_leverage" in switching_fields:
+                switching_default_max_leverage = st.number_input(
+                    "Default max leverage",
+                    min_value=0.0,
+                    value=1.0,
+                    step=0.1,
+                    disabled=switching_disabled,
+                )
+            if "default_cash_allocation" in switching_fields:
+                switching_default_cash_allocation = st.number_input(
+                    "Default cash allocation",
+                    min_value=0.0,
+                    max_value=1.0,
+                    value=0.0,
+                    step=0.05,
+                    disabled=switching_disabled,
+                )
+            if "endog_column" in switching_fields:
+                switching_endog_column = st.text_input(
+                    "Endogenous column", value="return", disabled=switching_disabled
+                )
+            if "exog_columns" in switching_fields:
+                switching_exog_raw = st.text_input(
+                    "Exogenous columns", value="", disabled=switching_disabled
+                )
+            if "trend" in switching_fields:
+                switching_trend = st.selectbox(
+                    "Trend", ["n", "c", "t", "ct"], index=1, disabled=switching_disabled
+                )
+            if "switching_variance" in switching_fields:
+                switching_variance = st.checkbox(
+                    "Switching variance", value=True, disabled=switching_disabled
+                )
+            if "max_iter" in switching_fields:
+                switching_max_iter = st.number_input(
+                    "Switching max iterations",
+                    min_value=1,
+                    value=100,
+                    step=10,
+                    disabled=switching_disabled,
+                )
         regime_switching_config = model_regime_switching_config(
             enabled=switching_enabled,
             switching_type=switching_type,
@@ -470,6 +708,20 @@ with st.form("model_definition"):
             target_weight_column=switching_target_weight_column.strip(),
             feature_columns=parse_csv_columns(switching_features_raw),
             regime_weights=parse_regime_weights(switching_weights_raw),
+            target_column=switching_target_column.strip(),
+            prediction_column=switching_prediction_column.strip(),
+            adjusted_signal_column=switching_adjusted_signal_column.strip(),
+            volatility_column=switching_volatility_column.strip(),
+            return_column=switching_return_column.strip(),
+            default_max_leverage=float(switching_default_max_leverage),
+            default_cash_allocation=float(switching_default_cash_allocation),
+            endog_column=switching_endog_column.strip(),
+            exog_columns=parse_csv_columns(switching_exog_raw),
+            n_regimes=int(switching_n_regimes),
+            trend=switching_trend,
+            switching_variance=switching_variance,
+            max_iter=int(switching_max_iter),
+            default_weight=float(switching_default_weight),
         )
 
     metadata = {"template": template_name, "target_column": default_target_column}
