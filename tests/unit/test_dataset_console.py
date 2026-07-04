@@ -129,10 +129,70 @@ def test_build_definition_persists_workflow_metadata() -> None:
         asset_class="equity",
         resolution="1d",
         workflow_intent="learned_regime_switching",
+        regime_source="real_market_data",
+        target_style="regime_labels",
+        preferred_task_type="regime_classification",
+        feature_requirements=["returns", "volatility", "trend"],
         labeling_intent="Learned regime switching",
     )
 
     assert definition.metadata["workflow_intent"] == "learned_regime_switching"
     assert definition.metadata["asset_class"] == "equity"
     assert definition.metadata["labeling_intent"] == "Learned regime switching"
-    assert definition.metadata["regime_source"] == "learned_from_real_data"
+    assert definition.metadata["regime_source"] == "real_market_data"
+    assert definition.metadata["target_style"] == "regime_labels"
+    assert definition.metadata["preferred_task_type"] == "regime_classification"
+    assert definition.metadata["feature_requirements"] == [
+        "returns",
+        "volatility",
+        "trend",
+    ]
+
+
+def test_build_definition_defaults_regime_compatibility_metadata() -> None:
+    definition = build_definition(
+        name="regime_dataset",
+        version="1",
+        provider="massive",
+        asset_universe=["SPY"],
+        data_types=["daily_bars"],
+        start=date(2025, 1, 1),
+        end=date(2025, 1, 2),
+        asset_class="equity",
+        resolution="1d",
+        workflow_intent="learned_regime_switching",
+    )
+
+    assert definition.metadata == {
+        "asset_class": "equity",
+        "workflow_intent": "learned_regime_switching",
+        "regime_source": "real_market_data",
+        "preferred_task_type": "regime_classification",
+    }
+
+
+def test_build_definition_explicit_metadata_fields_override_extra_metadata() -> None:
+    definition = build_definition(
+        name="regime_dataset",
+        version="1",
+        provider="massive",
+        asset_universe=["SPY"],
+        data_types=["daily_bars"],
+        start=date(2025, 1, 1),
+        end=date(2025, 1, 2),
+        asset_class="equity",
+        resolution="1d",
+        workflow_intent="learned_regime_switching",
+        preferred_task_type="regime_classification",
+        metadata={
+            "asset_class": "crypto",
+            "workflow_intent": "raw_market_data",
+            "preferred_task_type": "forecasting",
+            "custom": "kept",
+        },
+    )
+
+    assert definition.metadata["asset_class"] == "equity"
+    assert definition.metadata["workflow_intent"] == "learned_regime_switching"
+    assert definition.metadata["preferred_task_type"] == "regime_classification"
+    assert definition.metadata["custom"] == "kept"
