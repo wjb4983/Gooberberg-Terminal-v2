@@ -86,3 +86,53 @@ def test_queue_ingestion_registers_dataset_and_job(tmp_path) -> None:
     assert queued.status == "queued"
     assert queued.payload["symbols"] == ["AAPL"]
     assert queued.payload["dataset_name"] == "equity_daily_bars"
+
+
+def test_context_helpers_filter_regime_switching_options() -> None:
+    from quant_platform.datasets.console import (
+        data_type_options_for_asset_class,
+        default_resolution_for_context,
+        default_symbols_for_context,
+        provider_options_for_asset_class,
+    )
+
+    assert provider_options_for_asset_class("equity") == [
+        "massive",
+        "polygon",
+        "alpaca",
+        "yahoo",
+    ]
+    assert data_type_options_for_asset_class("equity", "learned_regime_switching") == [
+        "daily_bars",
+        "bars",
+    ]
+    assert "news" not in data_type_options_for_asset_class(
+        "equity", "learned_regime_switching"
+    )
+    assert default_resolution_for_context("equity", "learned_regime_switching") == "1d"
+    assert default_symbols_for_context("equity", "learned_regime_switching")[:3] == [
+        "SPY",
+        "QQQ",
+        "IWM",
+    ]
+
+
+def test_build_definition_persists_workflow_metadata() -> None:
+    definition = build_definition(
+        name="regime_dataset",
+        version="1",
+        provider="massive",
+        asset_universe=["SPY", "QQQ"],
+        data_types=["daily_bars"],
+        start=date(2025, 1, 1),
+        end=date(2025, 1, 2),
+        asset_class="equity",
+        resolution="1d",
+        workflow_intent="learned_regime_switching",
+        labeling_intent="Learned regime switching",
+    )
+
+    assert definition.metadata["workflow_intent"] == "learned_regime_switching"
+    assert definition.metadata["asset_class"] == "equity"
+    assert definition.metadata["labeling_intent"] == "Learned regime switching"
+    assert definition.metadata["regime_source"] == "learned_from_real_data"
