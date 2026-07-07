@@ -134,7 +134,12 @@ def _render_optimization_results(results: list[dict[str, Any]]) -> pd.DataFrame:
             )
 
     comparison_table = pd.DataFrame(comparison_rows)
-    st.subheader("Strategy comparison (placeholder outputs)")
+    has_placeholder = any(result.get("placeholder") for result in results)
+    st.subheader("Strategy comparison")
+    if has_placeholder:
+        st.caption(
+            "Placeholder rows use mock metrics until backend hooks are connected."
+        )
     st.dataframe(comparison_table, width="stretch", hide_index=True)
 
     if weight_detail_rows:
@@ -214,10 +219,7 @@ def _placeholder_results(
 
 st.set_page_config(page_title="Portfolio Optimization", page_icon="📈", layout="wide")
 st.title("Portfolio Optimization")
-st.caption(
-    "Compact portfolio optimization controls and placeholder outputs until "
-    "optimization backend hooks are available."
-)
+st.caption("Compare baseline allocation strategies with concise setup guidance.")
 
 setup_issues_list = setup_issues()
 if setup_issues_list:
@@ -281,6 +283,34 @@ with st.expander("Optimization controls", expanded=True):
         default=default_strategies,
         key="portfolio_optimization_baseline_strategies",
     )
+    with st.expander("Advanced constraints", expanded=False):
+        st.caption("Optional guardrails for future optimizer runs.")
+        constraint_left, constraint_right = st.columns(2)
+        long_only = constraint_left.checkbox(
+            "Long-only targets",
+            value=True,
+            key="portfolio_optimization_long_only",
+        )
+        max_position_weight = constraint_right.slider(
+            "Max position weight",
+            min_value=0.05,
+            max_value=1.0,
+            value=0.35,
+            step=0.05,
+            format="%.2f",
+            key="portfolio_optimization_max_position_weight",
+        )
+        max_turnover = st.slider(
+            "Max turnover",
+            min_value=0.0,
+            max_value=1.0,
+            value=0.25,
+            step=0.05,
+            format="%.2f",
+            key="portfolio_optimization_max_turnover",
+        )
+        st.caption("If a constraint blocks a solution, loosen it and rerun.")
+
     run_requested = st.button("Run optimization", type="primary")
 
 selected_hashes = _selected_account_hashes(accounts, account_label)
@@ -307,25 +337,27 @@ if metadata.get("stale_data"):
 for warning in summary.get("warnings") or []:
     st.warning(warning.get("message", "Portfolio warning."))
 
+with st.expander("Backend status", expanded=False):
+    st.warning("Optimizer backend is not connected yet.")
+    st.markdown("1. Use current portfolio data for inputs.")
+    st.markdown("2. Review placeholder targets before trading.")
+    st.markdown("3. Connect optimizer hooks to enable live results.")
+
 if run_requested:
-    st.success(
-        "Placeholder result: optimization backend hooks are not available yet, "
-        "so these tables use current portfolio data plus mock target weights."
-    )
+    st.success("Run complete. Results below are placeholder optimizer outputs.")
 else:
-    st.info(
-        "Placeholder result preview: click Run optimization to refresh the mock "
-        "optimization tables with the selected controls."
-    )
+    st.info("Preview mode. Click Run optimization to refresh placeholder tables.")
 
 allocation_table, optimization_results = _placeholder_results(
     summary, selected_strategies
 )
-st.markdown(
-    "**Placeholder result** — target weights and metrics are mock outputs until "
-    "backend optimization hooks are available."
-)
 _render_optimization_results(optimization_results)
+
+with st.expander("Detailed strategy assumptions", expanded=False):
+    st.caption("Placeholder assumptions used for the comparison table.")
+    st.markdown("- Targets are equal-weight across displayed symbols.")
+    st.markdown("- Metrics are mock values for UI validation.")
+    st.markdown("- No trades are generated from this page yet.")
 
 with st.expander("Target allocation preview", expanded=False):
     st.dataframe(allocation_table, width="stretch", hide_index=True)
@@ -341,6 +373,9 @@ with st.expander("Inputs used", expanded=False):
                     "input": "Baseline strategies",
                     "value": ", ".join(selected_strategies) or "None selected",
                 },
+                {"input": "Long-only targets", "value": "Yes" if long_only else "No"},
+                {"input": "Max position weight", "value": percent(max_position_weight)},
+                {"input": "Max turnover", "value": percent(max_turnover)},
                 {"input": "Result label", "value": "Placeholder result"},
             ]
         ),
