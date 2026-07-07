@@ -180,6 +180,23 @@ def _render_lookback_metrics(summary: dict[str, Any], selected_lookback: str) ->
     st.dataframe(pd.DataFrame([row]), width="stretch")
 
 
+def _render_optimization_link() -> None:
+    st.divider()
+    st.subheader("Portfolio Optimization")
+    st.caption(
+        "Use the selected account scope and benchmark context to explore optimized "
+        "allocation ideas."
+    )
+    if hasattr(st, "page_link"):
+        st.page_link(
+            "pages/7_Portfolio_Optimization.py",
+            label="Portfolio Optimization",
+            icon="📈",
+        )
+    else:
+        st.markdown("[📈 Portfolio Optimization](7_Portfolio_Optimization)")
+
+
 st.set_page_config(page_title="Portfolio", page_icon="💼", layout="wide")
 st.title("Portfolio")
 st.caption("Schwab-backed account, allocation, holding, and lookback analytics.")
@@ -259,3 +276,4 @@ _render_metrics(summary.get("totals") or {})
 _render_allocations(summary)
 _render_holdings(summary.get("holdings") or [])
 _render_lookback_metrics(summary, lookback)
+_render_optimization_link()
