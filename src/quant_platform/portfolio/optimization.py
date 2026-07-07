@@ -47,6 +47,7 @@ class StrategyExecutionInput:
     benchmark_data: Mapping[str, Any]
     constraints: Mapping[str, Any]
     universe: Mapping[str, Any] = field(default_factory=dict)
+    universe_assets: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

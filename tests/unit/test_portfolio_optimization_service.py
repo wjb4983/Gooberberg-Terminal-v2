@@ -6,10 +6,14 @@ from typing import Any
 import polars as pl
 import pytest
 
+from quant_platform.portfolio import optimization_service as optimization_service_module
 from quant_platform.portfolio.optimization import (
     STRATEGY_REGISTRY,
     PortfolioOptimizationStrategy,
+    PortfolioStrategyMetadata,
+    PortfolioStrategyRegistryEntry,
     StrategyExecutionInput,
+    StrategyRunResult,
 )
 from quant_platform.portfolio.optimization_service import (
     PortfolioOptimizationService,
@@ -258,13 +262,19 @@ def test_run_selected_strategies_universe_defaults_to_current_holdings_only() ->
         "metadata": {
             "AAA": {
                 "symbol": "AAA",
+                "asset_type": "EQUITY",
                 "is_current_holding": True,
                 "is_candidate": False,
+                "current_weight": pytest.approx(20.0 / 55.0),
+                "current_quantity": 2.0,
             },
             "BBB": {
                 "symbol": "BBB",
+                "asset_type": "ETF",
                 "is_current_holding": True,
                 "is_candidate": False,
+                "current_weight": pytest.approx(30.0 / 55.0),
+                "current_quantity": 1.0,
             },
         },
     }
@@ -301,13 +311,19 @@ def test_run_selected_strategies_universe_includes_candidate_symbols_only() -> N
     assert "Candidate symbol KMLM is missing price history." in result.warnings
     assert universe["metadata"]["SPY"] == {
         "symbol": "SPY",
+        "asset_type": "UNKNOWN",
         "is_current_holding": False,
         "is_candidate": True,
+        "current_weight": 0.0,
+        "current_quantity": 0.0,
     }
     assert universe["metadata"]["KMLM"] == {
         "symbol": "KMLM",
+        "asset_type": "UNKNOWN",
         "is_current_holding": False,
         "is_candidate": True,
+        "current_weight": 0.0,
+        "current_quantity": 0.0,
     }
 
 
@@ -352,13 +368,19 @@ def test_run_selected_strategies_universe_dedupes_overlap() -> None:
     assert "Candidate symbol CCC is missing price history." in result.warnings
     assert universe["metadata"]["AAA"] == {
         "symbol": "AAA",
+        "asset_type": "EQUITY",
         "is_current_holding": True,
         "is_candidate": True,
+        "current_weight": 0.4,
+        "current_quantity": 2.0,
     }
     assert universe["metadata"]["BBB"] == {
         "symbol": "BBB",
+        "asset_type": "ETF",
         "is_current_holding": True,
         "is_candidate": True,
+        "current_weight": 0.6,
+        "current_quantity": 1.0,
     }
 
 
@@ -394,13 +416,19 @@ def test_run_selected_strategies_universe_handles_cash_only_candidates() -> None
         "metadata": {
             "SPY": {
                 "symbol": "SPY",
+                "asset_type": "UNKNOWN",
                 "is_current_holding": False,
                 "is_candidate": True,
+                "current_weight": 0.0,
+                "current_quantity": 0.0,
             },
             "KMLM": {
                 "symbol": "KMLM",
+                "asset_type": "UNKNOWN",
                 "is_current_holding": False,
                 "is_candidate": True,
+                "current_weight": 0.0,
+                "current_quantity": 0.0,
             },
         },
     }
@@ -498,3 +526,72 @@ def test_run_selected_strategies_dedupes_candidate_current_holding_history() -> 
     assert universe["requested_symbols"] == ["AAA"]
     assert universe["rejected_symbols"] == []
     assert provider.history_calls == ["AAA", "SPY"]
+
+
+def test_strategy_runner_receives_current_and_candidate_asset_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured_inputs: list[StrategyExecutionInput] = []
+
+    def capture_runner(strategy_input: StrategyExecutionInput) -> StrategyRunResult:
+        captured_inputs.append(strategy_input)
+        return StrategyRunResult(
+            target_weights=strategy_input.current_weights, is_placeholder=False
+        )
+
+    strategy_id = PortfolioOptimizationStrategy.BUY_AND_HOLD
+    monkeypatch.setattr(
+        optimization_service_module,
+        "STRATEGY_REGISTRY",
+        {
+            strategy_id: PortfolioStrategyRegistryEntry(
+                metadata=PortfolioStrategyMetadata(
+                    strategy_id=strategy_id,
+                    strategy_name="Capture",
+                ),
+                runner=capture_runner,
+            )
+        },
+    )
+    provider = FakeSchwabProvider(
+        holdings={
+            "hash-1": [
+                {
+                    "symbol": "AAA",
+                    "asset_type": "EQUITY",
+                    "quantity": 2.0,
+                    "market_value": 20.0,
+                }
+            ]
+        },
+        histories={
+            "AAA": candles(10.0, 11.0),
+            "CCC": candles(30.0, 31.0),
+            "SPY": candles(100.0, 101.0),
+        },
+    )
+
+    PortfolioOptimizationService(PortfolioService(provider)).run_selected_strategies(
+        strategy_ids=[strategy_id],
+        universe_symbols=["CCC"],
+    )
+
+    assert len(captured_inputs) == 1
+    assert captured_inputs[0].universe_assets == {
+        "AAA": {
+            "symbol": "AAA",
+            "asset_type": "EQUITY",
+            "is_current_holding": True,
+            "is_candidate": False,
+            "current_weight": 1.0,
+            "current_quantity": 2.0,
+        },
+        "CCC": {
+            "symbol": "CCC",
+            "asset_type": "UNKNOWN",
+            "is_current_holding": False,
+            "is_candidate": True,
+            "current_weight": 0.0,
+            "current_quantity": 0.0,
+        },
+    }
