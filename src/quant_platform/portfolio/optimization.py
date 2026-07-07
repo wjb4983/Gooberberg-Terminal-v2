@@ -46,6 +46,7 @@ class StrategyExecutionInput:
     lookback_metrics: Mapping[str, Any]
     benchmark_data: Mapping[str, Any]
     constraints: Mapping[str, Any]
+    universe: Mapping[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
