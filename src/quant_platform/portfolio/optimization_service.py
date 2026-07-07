@@ -20,7 +20,11 @@ from quant_platform.portfolio.optimization import (
     PortfolioOptimizationStrategy,
     StrategyExecutionInput,
 )
-from quant_platform.portfolio.service import DEFAULT_BENCHMARK_SYMBOL, PortfolioService
+from quant_platform.portfolio.service import (
+    DEFAULT_BENCHMARK_SYMBOL,
+    PortfolioService,
+    _history_to_series,
+)
 
 PLACEHOLDER_WARNING = (
     "Optimization backend is not implemented yet; result uses current allocation "
@@ -60,8 +64,17 @@ class PortfolioOptimizationService:
         strategy_list = _resolve_strategy_ids(strategy_ids)
         strategy_input = _strategy_input_from_summary(summary)
         universe = _optimization_universe_from_summary(summary, universe_symbols)
+        prices, history_warnings = self._price_history_for_universe(
+            summary,
+            universe["symbols"],
+            benchmark_symbol,
+            candidate_symbols=_candidate_symbols_from_universe(universe),
+        )
+        universe = _filter_universe_for_price_history(universe, prices)
         metrics = summary.get("lookback_metrics", {}).get(lookback, {})
-        base_warnings = _base_warnings(summary, strategy_input, lookback)
+        base_warnings = _base_warnings(
+            summary, strategy_input, lookback, history_warnings
+        )
         base_constraints = {
             "benchmark_symbol": benchmark_symbol,
             "lookback": lookback,
@@ -72,7 +85,7 @@ class PortfolioOptimizationService:
             "universe": universe,
         }
         execution_input = StrategyExecutionInput(
-            prices=summary.get("price_history", {}),
+            prices=prices,
             current_weights=strategy_input["weights"],
             lookback_metrics=metrics,
             benchmark_data=summary.get("benchmark", {}),
@@ -105,6 +118,40 @@ class PortfolioOptimizationService:
                 )
             )
         return results
+
+    def _price_history_for_universe(
+        self,
+        summary: dict[str, Any],
+        symbols: Iterable[str],
+        benchmark_symbol: str,
+        candidate_symbols: Iterable[str] = (),
+    ) -> tuple[dict[str, Any], list[str]]:
+        """Return price histories for current holdings and candidate symbols."""
+
+        del benchmark_symbol  # Reserved for parity with benchmark-aware callers.
+        prices = dict(summary.get("price_history") or {})
+        warnings: list[str] = []
+        candidate_symbol_set = set(_normalize_symbols(candidate_symbols))
+        missing_symbols = [
+            symbol
+            for symbol in _normalize_symbols(symbols)
+            if symbol not in prices and symbol != CASH_SYMBOL
+        ]
+        for symbol in missing_symbols:
+            try:
+                payload, _refreshed_at, _from_cache = (
+                    self.portfolio_service._cached_historical_prices(symbol)
+                )
+                history = _history_to_series(payload)
+                if history.empty:
+                    raise ValueError("price history contained no candles")
+                prices[symbol] = history
+            except Exception:  # noqa: BLE001 - skip symbol, keep response
+                if symbol in candidate_symbol_set:
+                    warnings.append(
+                        f"Candidate symbol {symbol} is missing price history."
+                    )
+        return prices, _dedupe(warnings)
 
 
 def _resolve_strategy_ids(
@@ -170,6 +217,35 @@ def _optimization_universe_from_summary(
     }
 
 
+def _filter_universe_for_price_history(
+    universe: dict[str, Any], prices: dict[str, Any]
+) -> dict[str, Any]:
+    """Keep only symbols with histories in the executable optimizer universe."""
+
+    requested_symbols = list(universe.get("symbols", []))
+    executable_symbols = [symbol for symbol in requested_symbols if symbol in prices]
+    rejected_symbols = [symbol for symbol in requested_symbols if symbol not in prices]
+    return {
+        **universe,
+        "candidate_only_symbols": [
+            symbol
+            for symbol in universe.get("candidate_only_symbols", [])
+            if symbol in prices
+        ],
+        "symbols": executable_symbols,
+        "requested_symbols": requested_symbols,
+        "rejected_symbols": rejected_symbols,
+    }
+
+
+def _candidate_symbols_from_universe(universe: dict[str, Any]) -> list[str]:
+    return [
+        symbol
+        for symbol, metadata in universe.get("metadata", {}).items()
+        if metadata.get("is_candidate")
+    ]
+
+
 def _non_cash_holding_symbols(summary: dict[str, Any]) -> list[str]:
     symbols: list[str] = []
     for row in summary.get("holdings", []):
@@ -208,13 +284,17 @@ def _holding_input(row: dict[str, Any], weights: dict[str, float]) -> dict[str, 
 
 
 def _base_warnings(
-    summary: dict[str, Any], strategy_input: dict[str, Any], lookback: Lookback
+    summary: dict[str, Any],
+    strategy_input: dict[str, Any],
+    lookback: Lookback,
+    history_warnings: Iterable[str] = (),
 ) -> list[str]:
     summary_warnings = summary.get("warnings", [])
     warnings = [
         str(warning.get("message") or warning.get("code"))
         for warning in summary_warnings
     ]
+    warnings.extend(history_warnings)
     weights = strategy_input["weights"]
     if set(weights) == {CASH_SYMBOL}:
         warnings.append("Portfolio is cash-only; optimization keeps 100% cash.")

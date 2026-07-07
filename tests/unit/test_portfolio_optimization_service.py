@@ -253,6 +253,8 @@ def test_run_selected_strategies_universe_defaults_to_current_holdings_only() ->
         "current_holding_symbols": ["AAA", "BBB"],
         "candidate_only_symbols": [],
         "symbols": ["AAA", "BBB"],
+        "requested_symbols": ["AAA", "BBB"],
+        "rejected_symbols": [],
         "metadata": {
             "AAA": {
                 "symbol": "AAA",
@@ -292,8 +294,11 @@ def test_run_selected_strategies_universe_includes_candidate_symbols_only() -> N
 
     universe = result.constraints["universe"]
     assert universe["current_holding_symbols"] == ["AAA"]
-    assert universe["candidate_only_symbols"] == ["SPY", "KMLM"]
-    assert universe["symbols"] == ["AAA", "SPY", "KMLM"]
+    assert universe["candidate_only_symbols"] == ["SPY"]
+    assert universe["symbols"] == ["AAA", "SPY"]
+    assert universe["requested_symbols"] == ["AAA", "SPY", "KMLM"]
+    assert universe["rejected_symbols"] == ["KMLM"]
+    assert "Candidate symbol KMLM is missing price history." in result.warnings
     assert universe["metadata"]["SPY"] == {
         "symbol": "SPY",
         "is_current_holding": False,
@@ -340,8 +345,11 @@ def test_run_selected_strategies_universe_dedupes_overlap() -> None:
 
     universe = result.constraints["universe"]
     assert universe["current_holding_symbols"] == ["AAA", "BBB"]
-    assert universe["candidate_only_symbols"] == ["CCC"]
-    assert universe["symbols"] == ["AAA", "BBB", "CCC"]
+    assert universe["candidate_only_symbols"] == []
+    assert universe["symbols"] == ["AAA", "BBB"]
+    assert universe["requested_symbols"] == ["AAA", "BBB", "CCC"]
+    assert universe["rejected_symbols"] == ["CCC"]
+    assert "Candidate symbol CCC is missing price history." in result.warnings
     assert universe["metadata"]["AAA"] == {
         "symbol": "AAA",
         "is_current_holding": True,
@@ -379,8 +387,10 @@ def test_run_selected_strategies_universe_handles_cash_only_candidates() -> None
     assert result.target_weights == {"CASH": 1.0}
     assert result.constraints["universe"] == {
         "current_holding_symbols": [],
-        "candidate_only_symbols": ["SPY", "KMLM"],
-        "symbols": ["SPY", "KMLM"],
+        "candidate_only_symbols": ["SPY"],
+        "symbols": ["SPY"],
+        "requested_symbols": ["SPY", "KMLM"],
+        "rejected_symbols": ["KMLM"],
         "metadata": {
             "SPY": {
                 "symbol": "SPY",
@@ -394,3 +404,97 @@ def test_run_selected_strategies_universe_handles_cash_only_candidates() -> None
             },
         },
     }
+    assert "Candidate symbol KMLM is missing price history." in result.warnings
+
+
+def test_run_selected_strategies_keeps_candidate_with_history() -> None:
+    provider = FakeSchwabProvider(
+        holdings={
+            "hash-1": [
+                {
+                    "symbol": "AAA",
+                    "asset_type": "EQUITY",
+                    "quantity": 2.0,
+                    "market_value": 20.0,
+                }
+            ]
+        },
+        histories={
+            "AAA": candles(10.0, 11.0),
+            "CCC": candles(30.0, 31.0),
+            "SPY": candles(100.0, 101.0),
+        },
+    )
+
+    result = PortfolioOptimizationService(
+        PortfolioService(provider)
+    ).run_selected_strategies(
+        strategy_ids=[PortfolioOptimizationStrategy.BUY_AND_HOLD],
+        universe_symbols=["CCC"],
+    )[0]
+
+    universe = result.constraints["universe"]
+    assert universe["candidate_only_symbols"] == ["CCC"]
+    assert universe["symbols"] == ["AAA", "CCC"]
+    assert universe["rejected_symbols"] == []
+    assert "Candidate symbol CCC is missing price history." not in result.warnings
+
+
+def test_run_selected_strategies_rejects_candidate_without_history() -> None:
+    provider = FakeSchwabProvider(
+        holdings={
+            "hash-1": [
+                {
+                    "symbol": "AAA",
+                    "asset_type": "EQUITY",
+                    "quantity": 2.0,
+                    "market_value": 20.0,
+                }
+            ]
+        },
+        histories={"AAA": candles(10.0, 11.0), "SPY": candles(100.0, 101.0)},
+    )
+
+    result = PortfolioOptimizationService(
+        PortfolioService(provider)
+    ).run_selected_strategies(
+        strategy_ids=[PortfolioOptimizationStrategy.BUY_AND_HOLD],
+        universe_symbols=["CCC"],
+    )[0]
+
+    universe = result.constraints["universe"]
+    assert universe["candidate_only_symbols"] == []
+    assert universe["symbols"] == ["AAA"]
+    assert universe["requested_symbols"] == ["AAA", "CCC"]
+    assert universe["rejected_symbols"] == ["CCC"]
+    assert "Candidate symbol CCC is missing price history." in result.warnings
+
+
+def test_run_selected_strategies_dedupes_candidate_current_holding_history() -> None:
+    provider = FakeSchwabProvider(
+        holdings={
+            "hash-1": [
+                {
+                    "symbol": "AAA",
+                    "asset_type": "EQUITY",
+                    "quantity": 2.0,
+                    "market_value": 20.0,
+                }
+            ]
+        },
+        histories={"AAA": candles(10.0, 11.0), "SPY": candles(100.0, 101.0)},
+    )
+
+    result = PortfolioOptimizationService(
+        PortfolioService(provider)
+    ).run_selected_strategies(
+        strategy_ids=[PortfolioOptimizationStrategy.BUY_AND_HOLD],
+        universe_symbols=["aaa"],
+    )[0]
+
+    universe = result.constraints["universe"]
+    assert universe["candidate_only_symbols"] == []
+    assert universe["symbols"] == ["AAA"]
+    assert universe["requested_symbols"] == ["AAA"]
+    assert universe["rejected_symbols"] == []
+    assert provider.history_calls == ["AAA", "SPY"]
