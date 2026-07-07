@@ -210,3 +210,187 @@ def test_strategy_registry_exposes_metadata_and_callable_runners() -> None:
             PortfolioOptimizationStrategy.FIXED_SP500_KMLM,
         }:
             assert runner_result.is_placeholder is True
+
+
+def test_run_selected_strategies_universe_defaults_to_current_holdings_only() -> None:
+    provider = FakeSchwabProvider(
+        holdings={
+            "hash-1": [
+                {
+                    "symbol": "aaa",
+                    "asset_type": "EQUITY",
+                    "quantity": 2.0,
+                    "market_value": 20.0,
+                },
+                {
+                    "symbol": "BBB",
+                    "asset_type": "ETF",
+                    "quantity": 1.0,
+                    "market_value": 30.0,
+                },
+                {
+                    "symbol": "CASH",
+                    "asset_type": "CASH",
+                    "quantity": 5.0,
+                    "market_value": 5.0,
+                },
+            ]
+        },
+        histories={
+            "AAA": candles(10.0, 11.0),
+            "BBB": candles(30.0, 31.0),
+            "SPY": candles(100.0, 101.0),
+        },
+    )
+
+    result = PortfolioOptimizationService(
+        PortfolioService(provider)
+    ).run_selected_strategies(
+        strategy_ids=[PortfolioOptimizationStrategy.BUY_AND_HOLD]
+    )[0]
+
+    assert result.constraints["universe"] == {
+        "current_holding_symbols": ["AAA", "BBB"],
+        "candidate_only_symbols": [],
+        "symbols": ["AAA", "BBB"],
+        "metadata": {
+            "AAA": {
+                "symbol": "AAA",
+                "is_current_holding": True,
+                "is_candidate": False,
+            },
+            "BBB": {
+                "symbol": "BBB",
+                "is_current_holding": True,
+                "is_candidate": False,
+            },
+        },
+    }
+
+
+def test_run_selected_strategies_universe_includes_candidate_symbols_only() -> None:
+    provider = FakeSchwabProvider(
+        holdings={
+            "hash-1": [
+                {
+                    "symbol": "AAA",
+                    "asset_type": "EQUITY",
+                    "quantity": 2.0,
+                    "market_value": 20.0,
+                }
+            ]
+        },
+        histories={"AAA": candles(10.0, 11.0), "SPY": candles(100.0, 101.0)},
+    )
+
+    result = PortfolioOptimizationService(
+        PortfolioService(provider)
+    ).run_selected_strategies(
+        strategy_ids=[PortfolioOptimizationStrategy.BUY_AND_HOLD],
+        universe_symbols=["spy", " kmlm ", "SPY"],
+    )[0]
+
+    universe = result.constraints["universe"]
+    assert universe["current_holding_symbols"] == ["AAA"]
+    assert universe["candidate_only_symbols"] == ["SPY", "KMLM"]
+    assert universe["symbols"] == ["AAA", "SPY", "KMLM"]
+    assert universe["metadata"]["SPY"] == {
+        "symbol": "SPY",
+        "is_current_holding": False,
+        "is_candidate": True,
+    }
+    assert universe["metadata"]["KMLM"] == {
+        "symbol": "KMLM",
+        "is_current_holding": False,
+        "is_candidate": True,
+    }
+
+
+def test_run_selected_strategies_universe_dedupes_overlap() -> None:
+    provider = FakeSchwabProvider(
+        holdings={
+            "hash-1": [
+                {
+                    "symbol": "AAA",
+                    "asset_type": "EQUITY",
+                    "quantity": 2.0,
+                    "market_value": 20.0,
+                },
+                {
+                    "symbol": "BBB",
+                    "asset_type": "ETF",
+                    "quantity": 1.0,
+                    "market_value": 30.0,
+                },
+            ]
+        },
+        histories={
+            "AAA": candles(10.0, 11.0),
+            "BBB": candles(30.0, 31.0),
+            "SPY": candles(100.0, 101.0),
+        },
+    )
+
+    result = PortfolioOptimizationService(
+        PortfolioService(provider)
+    ).run_selected_strategies(
+        strategy_ids=[PortfolioOptimizationStrategy.BUY_AND_HOLD],
+        universe_symbols=["bbb", "CCC", "aaa", "ccc"],
+    )[0]
+
+    universe = result.constraints["universe"]
+    assert universe["current_holding_symbols"] == ["AAA", "BBB"]
+    assert universe["candidate_only_symbols"] == ["CCC"]
+    assert universe["symbols"] == ["AAA", "BBB", "CCC"]
+    assert universe["metadata"]["AAA"] == {
+        "symbol": "AAA",
+        "is_current_holding": True,
+        "is_candidate": True,
+    }
+    assert universe["metadata"]["BBB"] == {
+        "symbol": "BBB",
+        "is_current_holding": True,
+        "is_candidate": True,
+    }
+
+
+def test_run_selected_strategies_universe_handles_cash_only_candidates() -> None:
+    provider = FakeSchwabProvider(
+        holdings={
+            "hash-1": [
+                {
+                    "symbol": "CASH",
+                    "asset_type": "CASH",
+                    "quantity": 125.0,
+                    "market_value": 125.0,
+                }
+            ]
+        },
+        histories={"SPY": candles(100.0, 101.0)},
+    )
+
+    result = PortfolioOptimizationService(
+        PortfolioService(provider)
+    ).run_selected_strategies(
+        strategy_ids=[PortfolioOptimizationStrategy.BUY_AND_HOLD],
+        universe_symbols=["spy", "cash", "KMLM"],
+    )[0]
+
+    assert result.target_weights == {"CASH": 1.0}
+    assert result.constraints["universe"] == {
+        "current_holding_symbols": [],
+        "candidate_only_symbols": ["SPY", "KMLM"],
+        "symbols": ["SPY", "KMLM"],
+        "metadata": {
+            "SPY": {
+                "symbol": "SPY",
+                "is_current_holding": False,
+                "is_candidate": True,
+            },
+            "KMLM": {
+                "symbol": "KMLM",
+                "is_current_holding": False,
+                "is_candidate": True,
+            },
+        },
+    }

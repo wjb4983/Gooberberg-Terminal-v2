@@ -40,6 +40,7 @@ class PortfolioOptimizationService:
         benchmark_symbol: str = DEFAULT_BENCHMARK_SYMBOL,
         lookback: Lookback = "MAX",
         strategy_ids: Iterable[str | PortfolioOptimizationStrategy] | None = None,
+        universe_symbols: Iterable[str] | None = None,
     ) -> list[OptimizedPortfolioResult]:
         """Return deterministic placeholder optimization results for strategies.
 
@@ -58,6 +59,7 @@ class PortfolioOptimizationService:
         )
         strategy_list = _resolve_strategy_ids(strategy_ids)
         strategy_input = _strategy_input_from_summary(summary)
+        universe = _optimization_universe_from_summary(summary, universe_symbols)
         metrics = summary.get("lookback_metrics", {}).get(lookback, {})
         base_warnings = _base_warnings(summary, strategy_input, lookback)
         base_constraints = {
@@ -67,6 +69,7 @@ class PortfolioOptimizationService:
             "max_leverage": 1.0,
             "input_positions": strategy_input["positions"],
             "input_holdings": strategy_input["holdings"],
+            "universe": universe,
         }
         execution_input = StrategyExecutionInput(
             prices=summary.get("price_history", {}),
@@ -74,6 +77,7 @@ class PortfolioOptimizationService:
             lookback_metrics=metrics,
             benchmark_data=summary.get("benchmark", {}),
             constraints=base_constraints,
+            universe=universe,
         )
 
         results: list[OptimizedPortfolioResult] = []
@@ -139,6 +143,58 @@ def _strategy_input_from_summary(summary: dict[str, Any]) -> dict[str, Any]:
     return {"holdings": holdings, "positions": positions, "weights": weights}
 
 
+def _optimization_universe_from_summary(
+    summary: dict[str, Any], universe_symbols: Iterable[str] | None
+) -> dict[str, Any]:
+    """Build the normalized optimization universe for strategy runners."""
+
+    current_holding_symbols = _non_cash_holding_symbols(summary)
+    candidate_symbols = _normalize_symbols(universe_symbols)
+    candidate_only_symbols = [
+        symbol for symbol in candidate_symbols if symbol not in current_holding_symbols
+    ]
+    full_universe_symbols = _dedupe([*current_holding_symbols, *candidate_symbols])
+    symbol_metadata = {
+        symbol: {
+            "symbol": symbol,
+            "is_current_holding": symbol in current_holding_symbols,
+            "is_candidate": symbol in candidate_symbols,
+        }
+        for symbol in full_universe_symbols
+    }
+    return {
+        "current_holding_symbols": current_holding_symbols,
+        "candidate_only_symbols": candidate_only_symbols,
+        "symbols": full_universe_symbols,
+        "metadata": symbol_metadata,
+    }
+
+
+def _non_cash_holding_symbols(summary: dict[str, Any]) -> list[str]:
+    symbols: list[str] = []
+    for row in summary.get("holdings", []):
+        if row.get("is_cash"):
+            continue
+        symbol = _normalize_symbol(row.get("symbol"))
+        if symbol and symbol != CASH_SYMBOL:
+            symbols.append(symbol)
+    return _dedupe(symbols)
+
+
+def _normalize_symbols(symbols: Iterable[str] | None) -> list[str]:
+    if symbols is None:
+        return []
+    return _dedupe(
+        symbol
+        for raw_symbol in symbols
+        if (symbol := _normalize_symbol(raw_symbol)) and symbol != CASH_SYMBOL
+    )
+
+
+def _normalize_symbol(symbol: Any) -> str:
+    return str(symbol or "").strip().upper()
+
+
 def _holding_input(row: dict[str, Any], weights: dict[str, float]) -> dict[str, Any]:
     symbol = CASH_SYMBOL if row.get("is_cash") else str(row.get("symbol") or "").upper()
     return {
@@ -183,7 +239,7 @@ def _metric(metrics: dict[str, Any], key: str) -> float | None:
     return float(value) if value is not None else None
 
 
-def _dedupe(values: list[str]) -> list[str]:
+def _dedupe(values: Iterable[str]) -> list[str]:
     return list(dict.fromkeys(value for value in values if value))
 
 
