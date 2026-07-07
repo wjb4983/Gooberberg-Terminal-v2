@@ -63,7 +63,9 @@ class PortfolioOptimizationService:
         )
         strategy_list = _resolve_strategy_ids(strategy_ids)
         strategy_input = _strategy_input_from_summary(summary)
-        universe = _optimization_universe_from_summary(summary, universe_symbols)
+        universe = _optimization_universe_from_summary(
+            summary, universe_symbols, strategy_input["holdings"]
+        )
         prices, history_warnings = self._price_history_for_universe(
             summary,
             universe["symbols"],
@@ -91,6 +93,7 @@ class PortfolioOptimizationService:
             benchmark_data=summary.get("benchmark", {}),
             constraints=base_constraints,
             universe=universe,
+            universe_assets=universe["metadata"],
         )
 
         results: list[OptimizedPortfolioResult] = []
@@ -191,7 +194,9 @@ def _strategy_input_from_summary(summary: dict[str, Any]) -> dict[str, Any]:
 
 
 def _optimization_universe_from_summary(
-    summary: dict[str, Any], universe_symbols: Iterable[str] | None
+    summary: dict[str, Any],
+    universe_symbols: Iterable[str] | None,
+    holdings: Iterable[dict[str, Any]],
 ) -> dict[str, Any]:
     """Build the normalized optimization universe for strategy runners."""
 
@@ -201,12 +206,18 @@ def _optimization_universe_from_summary(
         symbol for symbol in candidate_symbols if symbol not in current_holding_symbols
     ]
     full_universe_symbols = _dedupe([*current_holding_symbols, *candidate_symbols])
+    holding_metadata = {
+        holding["symbol"]: holding
+        for holding in holdings
+        if not holding.get("is_cash") and holding.get("symbol") != CASH_SYMBOL
+    }
     symbol_metadata = {
-        symbol: {
-            "symbol": symbol,
-            "is_current_holding": symbol in current_holding_symbols,
-            "is_candidate": symbol in candidate_symbols,
-        }
+        symbol: _universe_asset_metadata(
+            symbol,
+            holding_metadata.get(symbol),
+            is_current_holding=symbol in current_holding_symbols,
+            is_candidate=symbol in candidate_symbols,
+        )
         for symbol in full_universe_symbols
     }
     return {
@@ -214,6 +225,23 @@ def _optimization_universe_from_summary(
         "candidate_only_symbols": candidate_only_symbols,
         "symbols": full_universe_symbols,
         "metadata": symbol_metadata,
+    }
+
+
+def _universe_asset_metadata(
+    symbol: str,
+    holding: dict[str, Any] | None,
+    *,
+    is_current_holding: bool,
+    is_candidate: bool,
+) -> dict[str, Any]:
+    return {
+        "symbol": symbol,
+        "asset_type": str((holding or {}).get("asset_type") or "UNKNOWN").upper(),
+        "is_current_holding": is_current_holding,
+        "is_candidate": is_candidate,
+        "current_weight": float((holding or {}).get("weight") or 0.0),
+        "current_quantity": float((holding or {}).get("quantity") or 0.0),
     }
 
 
