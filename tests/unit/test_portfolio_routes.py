@@ -19,7 +19,9 @@ class FakePortfolioService:
         return self._summary
 
 
-def _settings(client_id: str | None = "client-id", secret: str | None = "secret") -> Any:
+def _settings(
+    client_id: str | None = "client-id", secret: str | None = "secret"
+) -> Any:
     return SimpleNamespace(schwab_client_id=client_id, schwab_client_secret=secret)
 
 
@@ -126,7 +128,9 @@ def _asgi_get(path: str) -> tuple[int, dict[str, Any]]:
 def test_portfolio_holdings_success_sanitizes_secret_fields(monkeypatch) -> None:
     monkeypatch.setattr(portfolio_routes, "get_settings", lambda: _settings())
     monkeypatch.setattr(
-        portfolio_routes, "PortfolioService", lambda: FakePortfolioService(_base_summary())
+        portfolio_routes,
+        "PortfolioService",
+        lambda: FakePortfolioService(_base_summary()),
     )
 
     status, payload = _asgi_get("/api/v1/portfolio/holdings")
@@ -156,7 +160,9 @@ def test_portfolio_holdings_success_sanitizes_secret_fields(monkeypatch) -> None
 
 
 def test_portfolio_route_missing_schwab_configuration(monkeypatch) -> None:
-    monkeypatch.setattr(portfolio_routes, "get_settings", lambda: _settings(client_id=None))
+    monkeypatch.setattr(
+        portfolio_routes, "get_settings", lambda: _settings(client_id=None)
+    )
 
     status, payload = _asgi_get("/api/v1/portfolio/metrics")
 
@@ -222,3 +228,95 @@ def test_portfolio_metrics_include_sanitized_service_warnings(monkeypatch) -> No
         }
     ]
     assert "hash-secret" not in json.dumps(payload)
+
+
+class FakePortfolioOptimizationService:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    def run_selected_strategies(self, **kwargs: Any) -> list[Any]:
+        from quant_platform.portfolio.optimization import (
+            OptimizedPortfolioResult,
+            PortfolioOptimizationStrategy,
+        )
+
+        self.calls.append(kwargs)
+        return [
+            OptimizedPortfolioResult(
+                strategy_id=PortfolioOptimizationStrategy.BUY_AND_HOLD,
+                strategy_name="Buy-and-hold",
+                target_weights={"AAA": 0.8, "CASH": 0.2},
+                expected_return=0.1,
+                volatility=0.2,
+                sharpe=0.3,
+                max_drawdown=-0.05,
+                turnover=0.0,
+                leverage=1.0,
+                warnings=["Unable to fetch account hash-secret data."],
+                constraints={
+                    "benchmark_symbol": "QQQ",
+                    "lookback": "1Y",
+                    "account_hashes": ["hash-secret"],
+                },
+                is_placeholder=False,
+            )
+        ]
+
+
+def test_portfolio_optimization_runs_selected_strategies_and_sanitizes(
+    monkeypatch,
+) -> None:
+    fake_service = FakePortfolioOptimizationService()
+    monkeypatch.setattr(portfolio_routes, "get_settings", lambda: _settings())
+    monkeypatch.setattr(
+        portfolio_routes, "PortfolioOptimizationService", lambda: fake_service
+    )
+
+    status, payload = _asgi_get(
+        "/api/v1/portfolio/optimization?strategy_ids=buy_and_hold"
+        "&benchmark_symbol=qqq&lookback=1Y&account_hashes=hash-secret"
+    )
+
+    assert status == 200
+    assert fake_service.calls == [
+        {
+            "account_hashes": ["hash-secret"],
+            "benchmark_symbol": "QQQ",
+            "lookback": "1Y",
+            "strategy_ids": ["buy_and_hold"],
+        }
+    ]
+    assert payload["metadata"] == {
+        "benchmark_symbol": "QQQ",
+        "lookback": "1Y",
+        "selected_strategies": ["buy_and_hold"],
+    }
+    assert payload["results"][0]["strategy_id"] == "buy_and_hold"
+    assert payload["results"][0]["target_weights"] == {"AAA": 0.8, "CASH": 0.2}
+    assert "account_hashes" not in payload["results"][0]["constraints"]
+    assert "hash-secret" not in json.dumps(payload["results"][0]["constraints"])
+    assert payload["warnings"] == [
+        {
+            "code": "portfolio_optimization_warning",
+            "message": "Unable to fetch account hash-secret data.",
+            "symbol": None,
+        }
+    ]
+
+
+def test_portfolio_optimization_rejects_unsupported_lookback(monkeypatch) -> None:
+    class FailingPortfolioOptimizationService:
+        def run_selected_strategies(self, **_kwargs: Any) -> list[Any]:
+            raise ValueError("Unsupported lookback: BAD")
+
+    monkeypatch.setattr(portfolio_routes, "get_settings", lambda: _settings())
+    monkeypatch.setattr(
+        portfolio_routes,
+        "PortfolioOptimizationService",
+        lambda: FailingPortfolioOptimizationService(),
+    )
+
+    status, payload = _asgi_get("/api/v1/portfolio/optimization?lookback=BAD")
+
+    assert status == 422
+    assert payload == {"detail": "Unsupported lookback: BAD"}

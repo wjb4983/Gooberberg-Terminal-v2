@@ -8,6 +8,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field
 
 from quant_platform.config import get_settings
+from quant_platform.portfolio.optimization import PortfolioOptimizationStrategy
+from quant_platform.portfolio.optimization_service import (
+    PortfolioOptimizationService,
+    results_to_dicts,
+)
 from quant_platform.portfolio.service import PortfolioService
 
 router = APIRouter(prefix="/api/v1/portfolio", tags=["portfolio"])
@@ -134,14 +139,63 @@ class PortfolioSummaryResponse(
     """Complete sanitized portfolio summary."""
 
 
-def _service() -> PortfolioService:
+class OptimizedPortfolioResultResponse(BaseModel):
+    """Optimized portfolio result for a selected strategy."""
+
+    strategy_id: PortfolioOptimizationStrategy
+    strategy_name: str
+    target_weights: dict[str, float] = Field(default_factory=dict)
+    expected_return: float | None = None
+    volatility: float | None = None
+    sharpe: float | None = None
+    max_drawdown: float | None = None
+    turnover: float | None = None
+    leverage: float | None = None
+    warnings: list[str] = Field(default_factory=list)
+    constraints: dict[str, Any] = Field(default_factory=dict)
+    is_placeholder: bool = False
+
+
+class PortfolioOptimizationMetadataResponse(BaseModel):
+    """Non-secret metadata for an optimization run."""
+
+    benchmark_symbol: str
+    lookback: str
+    selected_strategies: list[PortfolioOptimizationStrategy] = Field(
+        default_factory=list
+    )
+
+
+class PortfolioOptimizationResponse(BaseModel):
+    """Portfolio optimization endpoint response."""
+
+    results: list[OptimizedPortfolioResultResponse]
+    warnings: list[PortfolioWarningResponse]
+    metadata: PortfolioOptimizationMetadataResponse
+
+
+def _schwab_configured() -> None:
     settings = get_settings()
     if not settings.schwab_client_id or not settings.schwab_client_secret:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Schwab configuration is missing.",
         )
+
+
+def _service() -> PortfolioService:
+    _schwab_configured()
     return PortfolioService()
+
+
+def _optimization_service() -> PortfolioOptimizationService:
+    _schwab_configured()
+    return PortfolioOptimizationService()
+
+
+_PORTFOLIO_OPTIMIZATION_SERVICE_DEPENDENCY = Depends(_optimization_service)
+_STRATEGY_IDS_QUERY = Query(default=None)
+_ACCOUNT_HASHES_QUERY = Query(default=None)
 
 
 _PORTFOLIO_SERVICE_DEPENDENCY = Depends(_service)
@@ -164,6 +218,15 @@ def _sanitize_summary(summary: dict[str, Any]) -> dict[str, Any]:
     metadata = dict(summary.get("metadata") or {})
     metadata.pop("account_hashes", None)
     sanitized["metadata"] = metadata
+    return sanitized
+
+
+def _sanitize_optimization_result(result: dict[str, Any]) -> dict[str, Any]:
+    sanitized = dict(result)
+    sanitized["warnings"] = [str(warning) for warning in result.get("warnings", [])]
+    constraints = dict(result.get("constraints") or {})
+    constraints.pop("account_hashes", None)
+    sanitized["constraints"] = constraints
     return sanitized
 
 
@@ -232,4 +295,51 @@ def get_portfolio_metrics(
         lookback_metrics=summary["lookback_metrics"],
         warnings=summary["warnings"],
         metadata=summary["metadata"],
+    )
+
+
+@router.get("/optimization", response_model=PortfolioOptimizationResponse)
+def get_portfolio_optimization(
+    strategy_ids: list[PortfolioOptimizationStrategy] | None = _STRATEGY_IDS_QUERY,
+    benchmark_symbol: str = Query(default="SPY"),
+    lookback: str = Query(default="MAX"),
+    account_hashes: list[str] | None = _ACCOUNT_HASHES_QUERY,
+    service: PortfolioOptimizationService = _PORTFOLIO_OPTIMIZATION_SERVICE_DEPENDENCY,
+) -> PortfolioOptimizationResponse:
+    """Run selected portfolio optimization strategies."""
+
+    normalized_benchmark = benchmark_symbol.strip().upper() or "SPY"
+    try:
+        results = service.run_selected_strategies(
+            account_hashes=account_hashes,
+            benchmark_symbol=normalized_benchmark,
+            lookback=lookback,  # type: ignore[arg-type]
+            strategy_ids=strategy_ids,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
+
+    result_dicts = [
+        _sanitize_optimization_result(row) for row in results_to_dicts(results)
+    ]
+    warnings = [
+        _sanitize_warning(
+            {"code": "portfolio_optimization_warning", "message": warning}
+        )
+        for result in result_dicts
+        for warning in result.get("warnings", [])
+    ]
+    selected_strategies = [
+        PortfolioOptimizationStrategy(row["strategy_id"]) for row in result_dicts
+    ]
+    return PortfolioOptimizationResponse(
+        results=result_dicts,
+        warnings=warnings,
+        metadata={
+            "benchmark_symbol": normalized_benchmark,
+            "lookback": lookback,
+            "selected_strategies": selected_strategies,
+        },
     )
