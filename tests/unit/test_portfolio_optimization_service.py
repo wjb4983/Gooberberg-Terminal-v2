@@ -6,9 +6,12 @@ from typing import Any
 import polars as pl
 import pytest
 
-from quant_platform.portfolio.optimization import PortfolioOptimizationStrategy
+from quant_platform.portfolio.optimization import (
+    STRATEGY_REGISTRY,
+    PortfolioOptimizationStrategy,
+    StrategyExecutionInput,
+)
 from quant_platform.portfolio.optimization_service import (
-    PLACEHOLDER_WARNING,
     PortfolioOptimizationService,
 )
 from quant_platform.portfolio.service import PortfolioService
@@ -87,9 +90,8 @@ def test_run_selected_strategies_reuses_summary_and_returns_current_weights() ->
         strategy_ids=[PortfolioOptimizationStrategy.BUY_AND_HOLD],
     )[0]
 
-    assert result.is_placeholder is True
+    assert result.is_placeholder is False
     assert result.warnings == [
-        PLACEHOLDER_WARNING,
         "Leverage assumes a long-only portfolio with max leverage of 1.0.",
     ]
     assert result.target_weights == {
@@ -116,15 +118,15 @@ def test_run_selected_strategies_returns_deterministic_mock_fixed_weights() -> N
         },
         histories={"AAA": candles(10.0, 11.0), "SPY": candles(100.0, 101.0)},
     )
-    result = (
-        PortfolioOptimizationService(PortfolioService(provider))
-        .run_selected_strategies(strategy_ids=["fixed_sp500_kmlm"])[0]
-    )
+    result = PortfolioOptimizationService(
+        PortfolioService(provider)
+    ).run_selected_strategies(strategy_ids=["fixed_sp500_kmlm"])[0]
 
     assert result.strategy_id == PortfolioOptimizationStrategy.FIXED_SP500_KMLM
     assert result.target_weights == {"KMLM": 0.4, "SPY": 0.6}
-    assert result.is_placeholder is True
+    assert result.is_placeholder is False
     assert result.leverage == 1.0
+    assert result.constraints["fixed_weights"] == {"SPY": 0.6, "KMLM": 0.4}
 
 
 def test_run_selected_strategies_surfaces_data_quality_warnings() -> None:
@@ -142,13 +144,12 @@ def test_run_selected_strategies_surfaces_data_quality_warnings() -> None:
         histories={"SPY": candles(100.0, 101.0)},
         failures={"history:BBB"},
     )
-    result = (
-        PortfolioOptimizationService(PortfolioService(provider))
-        .run_selected_strategies(
-            lookback="MAX",
-            strategy_ids=[PortfolioOptimizationStrategy.MEAN_VARIANCE_SHRINKAGE],
-        )[0]
-    )
+    result = PortfolioOptimizationService(
+        PortfolioService(provider)
+    ).run_selected_strategies(
+        lookback="MAX",
+        strategy_ids=[PortfolioOptimizationStrategy.MEAN_VARIANCE_SHRINKAGE],
+    )[0]
 
     assert "One or more holdings are missing price histories." in result.warnings
     assert (
@@ -172,12 +173,11 @@ def test_run_selected_strategies_warns_for_cash_only_portfolio() -> None:
         },
         histories={"SPY": candles(100.0, 101.0)},
     )
-    result = (
-        PortfolioOptimizationService(PortfolioService(provider))
-        .run_selected_strategies(
-            strategy_ids=[PortfolioOptimizationStrategy.BUY_AND_HOLD]
-        )[0]
-    )
+    result = PortfolioOptimizationService(
+        PortfolioService(provider)
+    ).run_selected_strategies(
+        strategy_ids=[PortfolioOptimizationStrategy.BUY_AND_HOLD]
+    )[0]
 
     assert result.target_weights == {"CASH": 1.0}
     assert "Portfolio is cash-only; optimization keeps 100% cash." in result.warnings
@@ -187,3 +187,26 @@ def test_run_selected_strategies_warns_for_cash_only_portfolio() -> None:
 def test_run_selected_strategies_rejects_unknown_lookback() -> None:
     with pytest.raises(ValueError, match="Unsupported lookback"):
         PortfolioOptimizationService().run_selected_strategies(lookback="2Y")  # type: ignore[arg-type]
+
+
+def test_strategy_registry_exposes_metadata_and_callable_runners() -> None:
+    execution_input = StrategyExecutionInput(
+        prices={},
+        current_weights={"AAA": 0.7, "BBB": 0.3},
+        lookback_metrics={},
+        benchmark_data={},
+        constraints={"long_only": True},
+    )
+
+    assert set(STRATEGY_REGISTRY) == set(PortfolioOptimizationStrategy)
+    for strategy_id, entry in STRATEGY_REGISTRY.items():
+        assert entry.metadata.strategy_id == strategy_id
+        assert entry.metadata.strategy_name
+        assert callable(entry.runner)
+        runner_result = entry.runner(execution_input)
+        assert runner_result.target_weights
+        if strategy_id not in {
+            PortfolioOptimizationStrategy.BUY_AND_HOLD,
+            PortfolioOptimizationStrategy.FIXED_SP500_KMLM,
+        }:
+            assert runner_result.is_placeholder is True
