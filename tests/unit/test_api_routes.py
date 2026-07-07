@@ -88,6 +88,7 @@ def test_api_v1_routes_are_registered() -> None:
         "/api/v1/portfolio/holdings",
         "/api/v1/portfolio/allocations",
         "/api/v1/portfolio/metrics",
+        "/api/v1/portfolio/optimization",
     }
     assert expected_paths <= set(paths)
 
@@ -121,6 +122,7 @@ def test_api_v1_routes_have_expected_methods() -> None:
     assert "get" in paths["/api/v1/portfolio/holdings"]
     assert "get" in paths["/api/v1/portfolio/allocations"]
     assert "get" in paths["/api/v1/portfolio/metrics"]
+    assert "get" in paths["/api/v1/portfolio/optimization"]
 
 
 def test_post_experiment_creates_queued_job(monkeypatch, tmp_path) -> None:
