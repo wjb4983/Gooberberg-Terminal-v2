@@ -241,10 +241,13 @@ class FakePortfolioOptimizationService:
         )
 
         self.calls.append(kwargs)
+        requested = kwargs.get("strategy_ids") or [
+            PortfolioOptimizationStrategy.BUY_AND_HOLD
+        ]
         return [
             OptimizedPortfolioResult(
-                strategy_id=PortfolioOptimizationStrategy.BUY_AND_HOLD,
-                strategy_name="Buy-and-hold",
+                strategy_id=PortfolioOptimizationStrategy(strategy_id),
+                strategy_name=PortfolioOptimizationStrategy(strategy_id).value,
                 target_weights={"AAA": 0.8, "CASH": 0.2},
                 expected_return=0.1,
                 volatility=0.2,
@@ -260,6 +263,7 @@ class FakePortfolioOptimizationService:
                 },
                 is_placeholder=False,
             )
+            for strategy_id in requested
         ]
 
 
@@ -301,6 +305,35 @@ def test_portfolio_optimization_runs_selected_strategies_and_sanitizes(
             "message": "Unable to fetch account hash-secret data.",
             "symbol": None,
         }
+    ]
+
+
+def test_portfolio_optimization_api_returns_only_requested_strategy_results(
+    monkeypatch,
+) -> None:
+    fake_service = FakePortfolioOptimizationService()
+    monkeypatch.setattr(portfolio_routes, "get_settings", lambda: _settings())
+    monkeypatch.setattr(
+        portfolio_routes, "PortfolioOptimizationService", lambda: fake_service
+    )
+
+    status, payload = _asgi_get(
+        "/api/v1/portfolio/optimization?strategy_ids=buy_and_hold"
+        "&strategy_ids=mean_variance_shrinkage"
+    )
+
+    assert status == 200
+    assert fake_service.calls[0]["strategy_ids"] == [
+        "buy_and_hold",
+        "mean_variance_shrinkage",
+    ]
+    assert [result["strategy_id"] for result in payload["results"]] == [
+        "buy_and_hold",
+        "mean_variance_shrinkage",
+    ]
+    assert payload["metadata"]["selected_strategies"] == [
+        "buy_and_hold",
+        "mean_variance_shrinkage",
     ]
 
 
