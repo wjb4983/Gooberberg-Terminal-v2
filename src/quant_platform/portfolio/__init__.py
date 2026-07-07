@@ -19,11 +19,13 @@ from quant_platform.portfolio.optimization import (
     PortfolioOptimizationStrategy,
     PortfolioStrategyMetadata,
 )
+from quant_platform.portfolio.optimization_service import PortfolioOptimizationService
 
 __all__ = [
     "LOOKBACKS",
     "OptimizedPortfolioResult",
     "PortfolioMetrics",
+    "PortfolioOptimizationService",
     "PortfolioOptimizationStrategy",
     "PortfolioStrategyMetadata",
     "STRATEGY_METADATA",
