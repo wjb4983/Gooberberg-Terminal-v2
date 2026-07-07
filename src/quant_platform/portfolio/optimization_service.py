@@ -15,21 +15,16 @@ from typing import Any
 from quant_platform.portfolio.metrics import CASH_SYMBOL, LOOKBACKS, Lookback
 from quant_platform.portfolio.optimization import (
     STRATEGY_METADATA,
+    STRATEGY_REGISTRY,
     OptimizedPortfolioResult,
     PortfolioOptimizationStrategy,
+    StrategyExecutionInput,
 )
 from quant_platform.portfolio.service import DEFAULT_BENCHMARK_SYMBOL, PortfolioService
 
 PLACEHOLDER_WARNING = (
     "Optimization backend is not implemented yet; result uses current allocation "
     "or mock weights."
-)
-_COVARIANCE_STRATEGIES = frozenset(
-    {
-        PortfolioOptimizationStrategy.EQUAL_RISK_PARITY,
-        PortfolioOptimizationStrategy.MEAN_VARIANCE_SHRINKAGE,
-        PortfolioOptimizationStrategy.BLACK_LITTERMAN_MOMENTUM_VIEWS,
-    }
 )
 
 
@@ -63,24 +58,36 @@ class PortfolioOptimizationService:
         )
         strategy_list = _resolve_strategy_ids(strategy_ids)
         strategy_input = _strategy_input_from_summary(summary)
-        current_weights = strategy_input["weights"]
         metrics = summary.get("lookback_metrics", {}).get(lookback, {})
         base_warnings = _base_warnings(summary, strategy_input, lookback)
+        base_constraints = {
+            "benchmark_symbol": benchmark_symbol,
+            "lookback": lookback,
+            "long_only": True,
+            "max_leverage": 1.0,
+            "input_positions": strategy_input["positions"],
+            "input_holdings": strategy_input["holdings"],
+        }
+        execution_input = StrategyExecutionInput(
+            prices=summary.get("price_history", {}),
+            current_weights=strategy_input["weights"],
+            lookback_metrics=metrics,
+            benchmark_data=summary.get("benchmark", {}),
+            constraints=base_constraints,
+        )
 
         results: list[OptimizedPortfolioResult] = []
         for strategy_id in strategy_list:
-            metadata = STRATEGY_METADATA[strategy_id]
-            warnings = [PLACEHOLDER_WARNING, *base_warnings]
-            if strategy_id in _COVARIANCE_STRATEGIES:
-                warnings.append(
-                    "Covariance estimates are unavailable until the optimization "
-                    "backend is implemented."
-                )
-            target_weights = _target_weights_for_strategy(strategy_id, current_weights)
+            entry = STRATEGY_REGISTRY[strategy_id]
+            runner_result = entry.runner(execution_input)
+            warnings = [*base_warnings, *runner_result.warnings]
+            if runner_result.is_placeholder:
+                warnings.insert(0, PLACEHOLDER_WARNING)
+            target_weights = runner_result.target_weights
             results.append(
                 OptimizedPortfolioResult(
                     strategy_id=strategy_id,
-                    strategy_name=metadata.strategy_name,
+                    strategy_name=entry.metadata.strategy_name,
                     target_weights=target_weights,
                     expected_return=_metric(metrics, "total_return"),
                     volatility=_metric(metrics, "annualized_volatility"),
@@ -88,16 +95,9 @@ class PortfolioOptimizationService:
                     max_drawdown=_metric(metrics, "max_drawdown"),
                     turnover=0.0,
                     leverage=_portfolio_leverage(target_weights),
-                    warnings=warnings,
-                    constraints={
-                        "benchmark_symbol": benchmark_symbol,
-                        "lookback": lookback,
-                        "long_only": True,
-                        "max_leverage": 1.0,
-                        "input_positions": strategy_input["positions"],
-                        "input_holdings": strategy_input["holdings"],
-                    },
-                    is_placeholder=True,
+                    warnings=_dedupe(warnings),
+                    constraints={**base_constraints, **runner_result.constraints},
+                    is_placeholder=runner_result.is_placeholder,
                 )
             )
         return results
@@ -130,9 +130,7 @@ def _strategy_input_from_summary(summary: dict[str, Any]) -> dict[str, Any]:
     }
     if not weights:
         weights = {CASH_SYMBOL: 1.0}
-    holdings = [
-        _holding_input(row, weights) for row in summary.get("holdings", [])
-    ]
+    holdings = [_holding_input(row, weights) for row in summary.get("holdings", [])]
     positions = {
         holding["symbol"]: holding["quantity"]
         for holding in holdings
@@ -141,9 +139,7 @@ def _strategy_input_from_summary(summary: dict[str, Any]) -> dict[str, Any]:
     return {"holdings": holdings, "positions": positions, "weights": weights}
 
 
-def _holding_input(
-    row: dict[str, Any], weights: dict[str, float]
-) -> dict[str, Any]:
+def _holding_input(row: dict[str, Any], weights: dict[str, float]) -> dict[str, Any]:
     symbol = CASH_SYMBOL if row.get("is_cash") else str(row.get("symbol") or "").upper()
     return {
         "symbol": symbol or CASH_SYMBOL,
@@ -176,14 +172,6 @@ def _base_warnings(
         warnings.append(f"Incomplete lookback data for {lookback}.")
     warnings.append("Leverage assumes a long-only portfolio with max leverage of 1.0.")
     return _dedupe(warnings)
-
-
-def _target_weights_for_strategy(
-    strategy_id: PortfolioOptimizationStrategy, current_weights: dict[str, float]
-) -> dict[str, float]:
-    if strategy_id == PortfolioOptimizationStrategy.FIXED_SP500_KMLM:
-        return {"KMLM": 0.4, "SPY": 0.6}
-    return dict(sorted(current_weights.items()))
 
 
 def _portfolio_leverage(weights: dict[str, float]) -> float:

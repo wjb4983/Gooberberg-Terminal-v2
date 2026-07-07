@@ -15,9 +15,14 @@ from quant_platform.portfolio.metrics import (
 )
 from quant_platform.portfolio.optimization import (
     STRATEGY_METADATA,
+    STRATEGY_REGISTRY,
     OptimizedPortfolioResult,
     PortfolioOptimizationStrategy,
     PortfolioStrategyMetadata,
+    PortfolioStrategyRegistryEntry,
+    StrategyExecutionInput,
+    StrategyRunner,
+    StrategyRunResult,
 )
 from quant_platform.portfolio.optimization_service import PortfolioOptimizationService
 
@@ -29,6 +34,11 @@ __all__ = [
     "PortfolioOptimizationStrategy",
     "PortfolioStrategyMetadata",
     "STRATEGY_METADATA",
+    "STRATEGY_REGISTRY",
+    "PortfolioStrategyRegistryEntry",
+    "StrategyExecutionInput",
+    "StrategyRunResult",
+    "StrategyRunner",
     "annualized_volatility",
     "beta_vs_benchmark",
     "compute_portfolio_metrics",
