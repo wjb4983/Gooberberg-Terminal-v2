@@ -226,6 +226,8 @@ def _training_config_from_payload(payload: Mapping[str, Any]) -> TrainingConfig:
     config_payload = dict(payload)
     config_payload.pop("catalog_job_id", None)
     config_payload.pop("rq_job_id", None)
+    settings = get_settings()
+    config_payload.setdefault("data_lake_root", settings.data_lake_root)
     if "split" in config_payload and "date_split" not in config_payload:
         config_payload["date_split"] = config_payload.pop("split")
     training = config_payload.pop("training", None)
